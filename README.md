@@ -4,14 +4,24 @@ A Tensorflow Implementation of Hinton's `Matrix Capsules with EM Routing.`
 
 Paper is under open review.
 
-# TODO:
+## MNIST
+
+```
+$ python train.py
+
+# open a new terminal (ctrl + alt + t)
+
+$ python tests.py
+```
+
+## TODO:
 
 1. Add documentation of the implementation.
 
 2. Add train/test on smallNORB
 
 
-# Questions:
+## Questions:
 
 1. $\lambda$ schedule is never mentioned in paper.
 
