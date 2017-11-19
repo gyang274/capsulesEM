@@ -7,9 +7,11 @@ from __future__ import print_function
 import gzip
 
 import numpy as np
+import tensorflow as tf
+
+from tensorflow.python.platform import gfile
 
 from . import utils
-from tensorflow.python.platform import gfile
 
 # CVDF mirror of http://yann.lecun.com/exdb/mnist/
 DEFAULT_SOURCE_URL = 'https://storage.googleapis.com/cvdf-datasets/mnist/'
@@ -18,6 +20,9 @@ TRAIN_IMAGES = 'train-images-idx3-ubyte.gz'
 TRAIN_LABELS = 'train-labels-idx1-ubyte.gz'
 TESTS_IMAGES = 't10k-images-idx3-ubyte.gz'
 TESTS_LABELS = 't10k-labels-idx1-ubyte.gz'
+
+NUM_TRAIN_EXAMPLES = 60000
+NUM_TESTS_EXAMPLES = 10000
 
 
 def _read32(bytestream):
@@ -144,4 +149,26 @@ def load_mnist(
 
   return images, labels
 
+
+def inputs(data_directory, is_training, batch_size):
+  """This constructs batched inputs of mnist data.
+  """
+
+  images, labels = load_mnist(
+    data_directory=data_directory,
+    is_training=is_training
+  )
+
+  data_queues = tf.train.slice_input_producer([images, labels])
+
+  images, labels = tf.train.shuffle_batch(
+    data_queues,
+    num_threads=16,
+    batch_size=batch_size,
+    capacity=batch_size * 64,
+    min_after_dequeue=batch_size * 32,
+    allow_smaller_final_batch=False
+  )
+
+  return (images, labels)
 

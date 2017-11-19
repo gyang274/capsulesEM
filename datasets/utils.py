@@ -99,9 +99,9 @@ def download(filename, work_directory, source_url, overwrite=False):
   filepath = os.path.join(work_directory, filename)
 
   if overwrite or not gfile.Exists(filepath):
-    _filename, _ = urlretrieve_with_retry(source_url)
+    _filename, _ = urlretrieve_with_retry(source_url + filename)
     print('_filename:', _filename)
-    gfile.Rename(_filename, filepath, overwrite=overwrite)
+    gfile.Copy(_filename, filepath, overwrite=overwrite)
     with gfile.GFile(filepath) as f:
       size = f.size()
     print('Successfully downloaded', filename, size, 'bytes.')
