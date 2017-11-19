@@ -76,7 +76,7 @@ def _get_biases_wrapper(name, shape):
 # ------------------------------------ main ------------------------------------#
 # ------------------------------------------------------------------------------#
 
-def _conv2d_wrapper(inputs, shape, strides, padding, add_bias, name):
+def _conv2d_wrapper(inputs, shape, strides, padding, add_bias, activation_fn, name):
   """Wrapper over tf.nn.conv2d().
   """
 
@@ -94,11 +94,15 @@ def _conv2d_wrapper(inputs, shape, strides, padding, add_bias, name):
       output = tf.add(
         output, biases, name='biasAdd'
       )
+    if activation_fn is not None:
+      output = activation_fn(
+        output, name='activation'
+      )
 
   return output
 
 
-def _separable_conv2d_wrapper(inputs, depthwise_shape, pointwise_shape, strides, padding, add_bias, name):
+def _separable_conv2d_wrapper(inputs, depthwise_shape, pointwise_shape, strides, padding, add_bias, activation_fn, name):
   """Wrapper over tf.nn.separable_conv2d().
   """
 
@@ -120,11 +124,15 @@ def _separable_conv2d_wrapper(inputs, depthwise_shape, pointwise_shape, strides,
       output = tf.add(
         output, biases, name='biasAdd'
       )
+    if activation_fn is not None:
+      output = activation_fn(
+        output, name='activation'
+      )
 
   return output
 
 
-def _depthwise_conv2d_wrapper(inputs, shape, strides, padding, add_bias, name):
+def _depthwise_conv2d_wrapper(inputs, shape, strides, padding, add_bias, activation_fn, name):
   """Wrapper over tf.nn.depthwise_conv2d().
   """
 
@@ -142,6 +150,10 @@ def _depthwise_conv2d_wrapper(inputs, shape, strides, padding, add_bias, name):
       )
       output = tf.add(
         output, biases, name='biasAdd'
+      )
+    if activation_fn is not None:
+      output = activation_fn(
+        output, name='activation'
       )
 
   return output
@@ -177,18 +189,14 @@ def capsule_init(inputs, shape, strides, padding, pose_shape, name):
     pose_wire = []
     for pw in xrange(pose_shape[1]):
       pose_unit = _conv2d_wrapper(
-        inputs, shape=shape, strides=strides, padding=padding, add_bias=False, name=name+'_pose_'+str(ph)+'_'+str(pw)
+        inputs, shape=shape, strides=strides, padding=padding, add_bias=False, activation_fn=None, name=name+'_pose_'+str(ph)+'_'+str(pw)
       )
       pose_wire.append(pose_unit)
     pose.append(tf.stack(pose_wire, axis=-1, name=name+'_pose_'+str(ph)))
   pose = tf.stack(pose, axis=-1, name=name+'_pose')
 
   activation = _conv2d_wrapper(
-    inputs, shape=shape, strides=strides, padding=padding, add_bias=False, name=name+'_actvation_conv'
-  )
-
-  activation = tf.sigmoid(
-    activation, name=name+'_activation'
+    inputs, shape=shape, strides=strides, padding=padding, add_bias=False, activation_fn=tf.sigmoid, name=name+'_activation'
   )
 
   return pose, activation
@@ -333,12 +341,18 @@ def matrix_capsule_em_routing(vote, i_activation, beta_v, beta_a, inverse_temper
     rr = tf.constant(
       1.0/vote_shape[2], shape=vote_shape[:-1] + [1], dtype=tf.float32
     )
+    rr = tf.Print(
+      rr, [rr.shape, rr[0, :, :, :]], 'rr', summarize=20
+    )
 
     # i_activation: expand to [N, KH x KW x I, 1, 1]
     i_activation = tf.expand_dims(
       tf.expand_dims(
         i_activation, axis=-1, name='i_activation_expansion_0'
       ), axis=-1, name='i_activation_expansion_1'
+    )
+    i_activation = tf.Print(
+      i_activation, [i_activation.shape, i_activation[0, :, :, :]], 'i_activation', summarize=20
     )
 
     # note: match rr shape, i_activation shape with shape vote for broadcasting in EM
@@ -358,12 +372,17 @@ def matrix_capsule_em_routing(vote, i_activation, beta_v, beta_a, inverse_temper
 
       # rr_prime: [N, KH x KW x I, O, 1]
       rr_prime = rr * i_activation
+      rr_prime = tf.Print(
+        rr_prime, [rr_prime.shape, rr_prime[0, :, 0, :]], 'mstep: rr_prime', summarize=20
+      )
 
       # rr_prime_sum: sum acorss i, [N, 1, O, 1]
       rr_prime_sum = tf.reduce_sum(
         rr_prime, axis=1, keep_dims=True, name='rr_prime_sum'
       )
-
+      rr_prime_sum = tf.Print(
+        rr_prime_sum, [rr_prime_sum.shape, rr_prime_sum[0, :, :, :]], 'mstep: rr_prime_sum', summarize=20
+      )
       # vote: [N, KH x KW x I, O, PH x PW]
       # rr_prime: [N, KH x KW x I, O, 1]
       # rr_prime_sum: [N, 1, O, 1]
@@ -371,23 +390,27 @@ def matrix_capsule_em_routing(vote, i_activation, beta_v, beta_a, inverse_temper
       o_mean = tf.reduce_sum(
         rr_prime * vote, axis=1, keep_dims=True
       ) / rr_prime_sum
+      o_mean = tf.Print(o_mean, [o_mean.shape, o_mean[0, :, :, :]], 'mstep: o_mean', summarize=20)
       # o_stdv: [N, 1, O, PH x PW]
       o_stdv = tf.sqrt(
         tf.reduce_sum(
           rr_prime * tf.square(vote - o_mean), axis=1, keep_dims=True
         ) / rr_prime_sum
       )
+      o_stdv = tf.Print(o_stdv, [o_stdv.shape, o_stdv[0, :, :, :]], 'mstep: o_stdv', summarize=20)
       # o_cost: [N, 1, O, PH x PW]
       o_cost = (beta_v + tf.log(o_stdv + epsilon)) * rr_prime_sum
+      o_cost = tf.Print(o_cost, [beta_v, o_cost.shape, o_cost[0, :, :, :]], 'mstep: beta_v, o_cost', summarize=20)
       # o_activation: [N, 1, O, 1]
       o_activation_cost = (beta_a - tf.reduce_sum(o_cost, axis=-1, keep_dims=True))
       # try to find a good inverse_temperature, for o_activation,
       o_activation_cost = tf.Print(
-        o_activation_cost, [inverse_temperature, o_activation_cost.shape, o_activation_cost], 'inverse_temperature, o_activation'
+        o_activation_cost, [inverse_temperature, beta_a, o_activation_cost.shape, o_activation_cost[0, :, :, :]], 'mstep: inverse_temperature, beta_a, o_activation', summarize=20
       )
       o_activation = tf.sigmoid(
         inverse_temperature * o_activation_cost
       )
+      o_activation = tf.Print(o_activation, [o_activation.shape, o_activation[0, :, :, :]], 'mstep: o_activation', summarize=20)
 
       return o_mean, o_stdv, o_activation
 
@@ -399,26 +422,45 @@ def matrix_capsule_em_routing(vote, i_activation, beta_v, beta_a, inverse_temper
       :param o_activation: [N, 1, O, 1]
       :param vote: [N, KH x KW x I, O, PH x PW]
 
-      :return: o_p, rr
+      :return: rr
       """
 
       # vote: [N, KH x KW x I, O, PH x PW]
       vote_shape = vote.get_shape().as_list()
-
+      vote = tf.Print(vote, [vote.shape, vote[0, :, :, :]], 'estep: vote', summarize=20)
       # o_p: [N, KH x KW x I, O, 1]
       # o_p is the probability density of the h-th component of the vote from i to c
-      o_p = tf.exp(
-        - tf.reduce_sum(
+      o_p_part1 = - tf.reduce_sum(
           tf.square(vote - o_mean) / (2 * tf.square(o_stdv)), axis=-1, keep_dims=True
-        ) - tf.log(
+        )
+      o_p_part1 = tf.Print(o_p_part1, [o_p_part1.shape, o_p_part1[0, :, :, :]], 'estep: o_p_part1', summarize=20)
+      o_p_part2 = - tf.log(
           0.50 * vote_shape[-1] * tf.log(2 * pi) + epsilon
-        ) - tf.reduce_sum(
+        )
+      o_p_part2 = tf.Print(o_p_part2, [o_p_part2.shape, o_p_part2], 'estep: o_p_part2', summarize=20)
+      o_p_part3 = - tf.reduce_sum(
           tf.log(o_stdv + epsilon), axis=-1, keep_dims=True
         )
-      )
-      # rr: [N, KH x KW x I, O, 1]
-      rr = o_activation * o_p
-      rr = rr / tf.reduce_sum(rr, axis=2, keep_dims=True)
+      o_p_part3 = tf.Print(o_p_part3, [o_p_part3.shape, o_p_part3[0, :, :, :]], 'estep: o_p_part3', summarize=20)
+
+      # o_p = tf.exp(
+      #   o_p_part1 + o_p_part2 + o_p_part3
+      # )
+      # o_p = tf.Print(o_p, [o_p.shape, o_p[0, :, :, :]], 'estep: o_p', summarize=20)
+      # o_activation = tf.Print(o_activation, [o_activation.shape, o_activation], 'estep: o_activation', summarize=20)
+      # # rr: [N, KH x KW x I, O, 1]
+      # rr = o_activation * o_p
+
+      # numerical stable
+      o_p = o_p_part1 + o_p_part2 + o_p_part3
+      o_p = tf.Print(o_p, [o_p.shape, o_p[0, :, :, :]], 'estep: o_p', summarize=20)
+      rr = tf.log(o_activation + epsilon) + o_p
+      rr = tf.Print(rr, [rr.shape, rr[0, :, :, :]], 'estep: rr before softmax', summarize=20)
+      rr = tf.nn.softmax(rr, dim=2)
+
+      # rr = tf.Print(rr, [rr.shape, rr[0, :, :, :]], 'estep: rr before div', summarize=20)
+      # rr = rr / tf.reduce_sum(rr, axis=2, keep_dims=True)
+      rr = tf.Print(rr, [rr.shape, rr[0, :, :, :]], 'estep: rr after softmax', summarize=20)
       return rr
 
     for t in xrange(iterations):
@@ -560,20 +602,19 @@ def capsule_net(inputs, num_classes, inverse_temperature, iterations, name='Caps
 
     # inputs [N, H, W, C] -> conv2d, 5x5, strides 2, channels 32 -> nets [N, OH, OW, 32]
     nets = _conv2d_wrapper(
-      inputs, shape=[5, 5, 1, 32], strides=[1, 2, 2, 1], padding='SAME', add_bias=True, name='conv1'
+      inputs, shape=[5, 5, 1, 32], strides=[1, 2, 2, 1], padding='SAME', add_bias=True, activation_fn=tf.nn.relu, name='conv1'
     )
-    nets = tf.nn.relu(nets)
     # inputs [N, H, W, C] -> conv2d, 1x1, strides 1, channels 32 x (4x4+1) -> pose, activation
     nets = capsule_init(
       nets, shape=[1, 1, 32, 32], strides=[1, 1, 1, 1], padding='VALID', pose_shape=[4, 4], name='capsule_init'
     )
-    # inputs: (pose, activation) -> capsule-conv 4x4 -> (pose, activation)
+    # inputs: (pose, activation) -> capsule-conv 3x3x32x32x4x4 -> (pose, activation)
     nets = capsule_conv(
-      nets, shape=[4, 4, 32, 32], strides=[1, 2, 2, 1], inverse_temperature=inverse_temperature, iterations=iterations, name='capsule_conv1'
+      nets, shape=[3, 3, 32, 32], strides=[1, 2, 2, 1], inverse_temperature=inverse_temperature, iterations=iterations, name='capsule_conv1'
     )
-    # inputs: (pose, activation) -> capsule-conv 4x4 -> (pose, activation)
+    # inputs: (pose, activation) -> capsule-conv 3x3x32x32x4x4 -> (pose, activation)
     nets = capsule_conv(
-      nets, shape=[4, 4, 32, 32], strides=[1, 1, 1, 1], inverse_temperature=inverse_temperature, iterations=iterations, name='capsule_conv2'
+      nets, shape=[3, 3, 32, 32], strides=[1, 1, 1, 1], inverse_temperature=inverse_temperature, iterations=iterations, name='capsule_conv2'
     )
     # inputs: (pose, activation) -> capsule-fc HxW share weight between 1x1 -> (pose, activation)
     nets = capsule_fc(

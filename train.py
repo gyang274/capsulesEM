@@ -22,7 +22,7 @@ slim = tf.contrib.slim
 def main(_):
   tf.logging.set_verbosity(tf.logging.INFO)
   with tf.Graph().as_default():
-    global_step = tf.contrib.framework.get_or_create_global_step()
+    global_step = tf.train.get_or_create_global_step()
     with tf.device('/cpu:0'):
       images, labels = mnist.inputs(
         data_directory='data/mnist', is_training=True, batch_size=FLAGS.batch_size
