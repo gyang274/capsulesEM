@@ -169,14 +169,14 @@ def capsule_init(inputs, shape, strides, padding, pose_shape, name):
     where often N is batch_size, H is height, W is width, and C is channel.
   :param shape: the shape of convolution operation kernel, [KH, KW, I, O],
     where KH is kernel height, KW is kernel width, I is inputs channels, and O is output channels.
-  :param strides: TODO
-  :param padding: TODO
+  :param strides: strides w.r.t [N, H, W, C], often [1, 1, 1, 1], or [1, 2, 2, 1].
+  :param padding: padding, often SAME or VALID.
   :param pose_shape: the pose shape, [PH, PW], where PH is pose height, and PW is pose width.
-  :param name: TODO
+  :param name: name.
   :return: (pose, activation), pose: [N, H, W, C, PH, PW], activation: [N, H, W, C],
     where often N is batch_size, H is height, W is width, C is channel, PH is pose height, and PW is pose width.
 
-  note: in paper, Figure1, this function provides the operation to build from
+  note: in paper, Figure 1, this function provides the operation to build from
     ReLU Conv1 [batch_size, 14, 14, 32] to
     PrimaryCapsule [batch_size, 6, 6, 32, 4, 4] pose, [batch_size, 6, 6, 32] activation with
     Kernel [A, B, 4 x 4 + 1]
@@ -210,8 +210,8 @@ def capsule_conv(inputs, shape, strides, inverse_temperature, iterations, name):
 
   :param shape: the shape of convolution operation kernel, [KH, KW, I, O],
     where KH is kernel height, KW is kernel width, I is inputs channels, and O is output channels.
-  :param strides: TODO
-  :param name: TODO
+  :param strides: strides w.r.t [N, H, W, C].
+  :param name: name.
   :return: (pose, activation) same as capsule_init
 
   TODO:
@@ -341,9 +341,9 @@ def matrix_capsule_em_routing(vote, i_activation, beta_v, beta_a, inverse_temper
     rr = tf.constant(
       1.0/vote_shape[2], shape=vote_shape[:-1] + [1], dtype=tf.float32
     )
-    rr = tf.Print(
-      rr, [rr.shape, rr[0, :, :, :]], 'rr', summarize=20
-    )
+    # rr = tf.Print(
+    #   rr, [rr.shape, rr[0, :, :, :]], 'rr', summarize=20
+    # )
 
     # i_activation: expand to [N, KH x KW x I, 1, 1]
     i_activation = tf.expand_dims(
@@ -351,9 +351,9 @@ def matrix_capsule_em_routing(vote, i_activation, beta_v, beta_a, inverse_temper
         i_activation, axis=-1, name='i_activation_expansion_0'
       ), axis=-1, name='i_activation_expansion_1'
     )
-    i_activation = tf.Print(
-      i_activation, [i_activation.shape, i_activation[0, :, :, :]], 'i_activation', summarize=20
-    )
+    # i_activation = tf.Print(
+    #   i_activation, [i_activation.shape, i_activation[0, :, :, :]], 'i_activation', summarize=20
+    # )
 
     # note: match rr shape, i_activation shape with shape vote for broadcasting in EM
 
@@ -372,17 +372,18 @@ def matrix_capsule_em_routing(vote, i_activation, beta_v, beta_a, inverse_temper
 
       # rr_prime: [N, KH x KW x I, O, 1]
       rr_prime = rr * i_activation
-      rr_prime = tf.Print(
-        rr_prime, [rr_prime.shape, rr_prime[0, :, 0, :]], 'mstep: rr_prime', summarize=20
-      )
+      # rr_prime = tf.Print(
+      #   rr_prime, [rr_prime.shape, rr_prime[0, :, 0, :]], 'mstep: rr_prime', summarize=20
+      # )
 
       # rr_prime_sum: sum acorss i, [N, 1, O, 1]
       rr_prime_sum = tf.reduce_sum(
         rr_prime, axis=1, keep_dims=True, name='rr_prime_sum'
       )
-      rr_prime_sum = tf.Print(
-        rr_prime_sum, [rr_prime_sum.shape, rr_prime_sum[0, :, :, :]], 'mstep: rr_prime_sum', summarize=20
-      )
+      # rr_prime_sum = tf.Print(
+      #   rr_prime_sum, [rr_prime_sum.shape, rr_prime_sum[0, :, :, :]], 'mstep: rr_prime_sum', summarize=20
+      # )
+
       # vote: [N, KH x KW x I, O, PH x PW]
       # rr_prime: [N, KH x KW x I, O, 1]
       # rr_prime_sum: [N, 1, O, 1]
@@ -390,27 +391,27 @@ def matrix_capsule_em_routing(vote, i_activation, beta_v, beta_a, inverse_temper
       o_mean = tf.reduce_sum(
         rr_prime * vote, axis=1, keep_dims=True
       ) / rr_prime_sum
-      o_mean = tf.Print(o_mean, [o_mean.shape, o_mean[0, :, :, :]], 'mstep: o_mean', summarize=20)
+      # o_mean = tf.Print(o_mean, [o_mean.shape, o_mean[0, :, :, :]], 'mstep: o_mean', summarize=20)
       # o_stdv: [N, 1, O, PH x PW]
       o_stdv = tf.sqrt(
         tf.reduce_sum(
           rr_prime * tf.square(vote - o_mean), axis=1, keep_dims=True
         ) / rr_prime_sum
       )
-      o_stdv = tf.Print(o_stdv, [o_stdv.shape, o_stdv[0, :, :, :]], 'mstep: o_stdv', summarize=20)
+      # o_stdv = tf.Print(o_stdv, [o_stdv.shape, o_stdv[0, :, :, :]], 'mstep: o_stdv', summarize=20)
       # o_cost: [N, 1, O, PH x PW]
       o_cost = (beta_v + tf.log(o_stdv + epsilon)) * rr_prime_sum
-      o_cost = tf.Print(o_cost, [beta_v, o_cost.shape, o_cost[0, :, :, :]], 'mstep: beta_v, o_cost', summarize=20)
+      # o_cost = tf.Print(o_cost, [beta_v, o_cost.shape, o_cost[0, :, :, :]], 'mstep: beta_v, o_cost', summarize=20)
       # o_activation: [N, 1, O, 1]
       o_activation_cost = (beta_a - tf.reduce_sum(o_cost, axis=-1, keep_dims=True))
       # try to find a good inverse_temperature, for o_activation,
-      o_activation_cost = tf.Print(
-        o_activation_cost, [inverse_temperature, beta_a, o_activation_cost.shape, o_activation_cost[0, :, :, :]], 'mstep: inverse_temperature, beta_a, o_activation', summarize=20
-      )
+      # o_activation_cost = tf.Print(
+      #   o_activation_cost, [inverse_temperature, beta_a, o_activation_cost.shape, o_activation_cost[0, :, :, :]], 'mstep: inverse_temperature, beta_a, o_activation_cost', summarize=20
+      # )
       o_activation = tf.sigmoid(
         inverse_temperature * o_activation_cost
       )
-      o_activation = tf.Print(o_activation, [o_activation.shape, o_activation[0, :, :, :]], 'mstep: o_activation', summarize=20)
+      # o_activation = tf.Print(o_activation, [o_activation.shape, o_activation[0, :, :, :]], 'mstep: o_activation', summarize=20)
 
       return o_mean, o_stdv, o_activation
 
@@ -427,40 +428,41 @@ def matrix_capsule_em_routing(vote, i_activation, beta_v, beta_a, inverse_temper
 
       # vote: [N, KH x KW x I, O, PH x PW]
       vote_shape = vote.get_shape().as_list()
-      vote = tf.Print(vote, [vote.shape, vote[0, :, :, :]], 'estep: vote', summarize=20)
+      # vote = tf.Print(vote, [vote.shape, vote[0, :, :, :]], 'estep: vote', summarize=20)
       # o_p: [N, KH x KW x I, O, 1]
       # o_p is the probability density of the h-th component of the vote from i to c
-      o_p_part1 = - tf.reduce_sum(
-          tf.square(vote - o_mean) / (2 * tf.square(o_stdv)), axis=-1, keep_dims=True
-        )
-      o_p_part1 = tf.Print(o_p_part1, [o_p_part1.shape, o_p_part1[0, :, :, :]], 'estep: o_p_part1', summarize=20)
-      o_p_part2 = - tf.log(
-          0.50 * vote_shape[-1] * tf.log(2 * pi) + epsilon
-        )
-      o_p_part2 = tf.Print(o_p_part2, [o_p_part2.shape, o_p_part2], 'estep: o_p_part2', summarize=20)
-      o_p_part3 = - tf.reduce_sum(
-          tf.log(o_stdv + epsilon), axis=-1, keep_dims=True
-        )
-      o_p_part3 = tf.Print(o_p_part3, [o_p_part3.shape, o_p_part3[0, :, :, :]], 'estep: o_p_part3', summarize=20)
 
+      # o_p: version 0
+      o_p_unit0 = - tf.reduce_sum(
+        tf.square(vote - o_mean) / (2 * tf.square(o_stdv)), axis=-1, keep_dims=True
+      )
+      # o_p_unit0 = tf.Print(o_p_unit0, [o_p_unit0.shape, o_p_unit0[0, :, :, :]], 'estep: o_p_unit0', summarize=20)
+      # o_p_unit1 = - tf.log(
+      #   0.50 * vote_shape[-1] * tf.log(2 * pi) + epsilon
+      # )
+      # o_p_unit1 = tf.Print(o_p_unit1, [o_p_unit1.shape, o_p_unit1], 'estep: o_p_unit1', summarize=20)
+      o_p_unit2 = - tf.reduce_sum(
+        tf.log(o_stdv + epsilon), axis=-1, keep_dims=True
+      )
+      # o_p_unit2 = tf.Print(o_p_unit2, [o_p_unit2.shape, o_p_unit2[0, :, :, :]], 'estep: o_p_unit2', summarize=20)
       # o_p = tf.exp(
-      #   o_p_part1 + o_p_part2 + o_p_part3
+      #   o_p_unit0 + o_p_unit1 + o_p_unit2
       # )
       # o_p = tf.Print(o_p, [o_p.shape, o_p[0, :, :, :]], 'estep: o_p', summarize=20)
-      # o_activation = tf.Print(o_activation, [o_activation.shape, o_activation], 'estep: o_activation', summarize=20)
       # # rr: [N, KH x KW x I, O, 1]
       # rr = o_activation * o_p
-
-      # numerical stable
-      o_p = o_p_part1 + o_p_part2 + o_p_part3
-      o_p = tf.Print(o_p, [o_p.shape, o_p[0, :, :, :]], 'estep: o_p', summarize=20)
-      rr = tf.log(o_activation + epsilon) + o_p
-      rr = tf.Print(rr, [rr.shape, rr[0, :, :, :]], 'estep: rr before softmax', summarize=20)
-      rr = tf.nn.softmax(rr, dim=2)
-
-      # rr = tf.Print(rr, [rr.shape, rr[0, :, :, :]], 'estep: rr before div', summarize=20)
+      # rr = tf.Print(rr, [rr.shape, rr[0, :, :, :]], 'estep: rr before division', summarize=20)
       # rr = rr / tf.reduce_sum(rr, axis=2, keep_dims=True)
-      rr = tf.Print(rr, [rr.shape, rr[0, :, :, :]], 'estep: rr after softmax', summarize=20)
+      # rr = tf.Print(rr, [rr.shape, rr[0, :, :, :]], 'estep: rr after division', summarize=20)
+
+      # o_p: version 1: numerical stable
+      o_p = o_p_unit0 + o_p_unit2
+      # o_p = tf.Print(o_p, [o_p.shape, o_p[0, :, :, :]], 'estep: o_p', summarize=20)
+      rr = tf.log(o_activation + epsilon) + o_p
+      # rr = tf.Print(rr, [rr.shape, rr[0, :, :, :]], 'estep: rr before softmax', summarize=20)
+      rr = tf.nn.softmax(rr, dim=2)
+      # rr = tf.Print(rr, [rr.shape, rr[0, :, :, :]], 'estep: rr after softmax', summarize=20)
+
       return rr
 
     for t in xrange(iterations):

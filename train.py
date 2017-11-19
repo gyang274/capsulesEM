@@ -1,3 +1,11 @@
+"""A train script for matrix capsule with EM routing."""
+
+# TODO: re-write use generic sess/train, without slim.
+
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 import tensorflow as tf
 
 from datasets import mnist
@@ -8,6 +16,9 @@ FLAGS = tf.app.flags.FLAGS
 
 tf.app.flags.DEFINE_integer(
   'batch_size', 128, 'Train Batch Size.'
+)
+tf.app.flags.DEFINE_string(
+  'data_dir', 'data/mnist', 'Data Directory'
 )
 tf.app.flags.DEFINE_string(
   'train_dir', 'log/train', 'Train Directory.'
@@ -25,7 +36,9 @@ def main(_):
     global_step = tf.train.get_or_create_global_step()
     with tf.device('/cpu:0'):
       images, labels = mnist.inputs(
-        data_directory='data/mnist', is_training=True, batch_size=FLAGS.batch_size
+        data_directory=FLAGS.data_dir,
+        is_training=True,
+        batch_size=FLAGS.batch_size
       )
       inverse_temperature = tf.train.piecewise_constant(
         tf.cast(global_step, dtype=tf.int32),
