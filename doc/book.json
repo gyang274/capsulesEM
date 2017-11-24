@@ -1,0 +1,15 @@
+{
+  "root": "./src",
+  "author": "Guang Yang",
+  "links": {
+    "sidebar": {
+      "Matrix Capsules with EM Routing": "https://gyang274.github.io/capsulesEM/"
+    }
+  },
+  "plugins": [
+    "mathjax"
+  ],
+  "styles": {
+    "website": "css/website.css"
+  }
+}

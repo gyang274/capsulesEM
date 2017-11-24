@@ -1,0 +1,328 @@
+
+<!DOCTYPE HTML>
+<html lang="" >
+    <head>
+        <meta charset="UTF-8">
+        <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+        <title>An Understanding · GitBook</title>
+        <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+        <meta name="description" content="">
+        <meta name="generator" content="GitBook 3.2.3">
+        <meta name="author" content="Guang Yang">
+        
+        
+    
+    <link rel="stylesheet" href="gitbook/style.css">
+
+    
+            
+                
+                <link rel="stylesheet" href="gitbook/gitbook-plugin-highlight/website.css">
+                
+            
+                
+                <link rel="stylesheet" href="gitbook/gitbook-plugin-search/search.css">
+                
+            
+                
+                <link rel="stylesheet" href="gitbook/gitbook-plugin-fontsettings/website.css">
+                
+            
+        
+
+    
+
+    
+        
+        <link rel="stylesheet" href="css/website.css">
+        
+    
+
+        
+    
+    
+    <meta name="HandheldFriendly" content="true"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <link rel="apple-touch-icon-precomposed" sizes="152x152" href="gitbook/images/apple-touch-icon-precomposed-152.png">
+    <link rel="shortcut icon" href="gitbook/images/favicon.ico" type="image/x-icon">
+
+    
+    <link rel="next" href="0x01.main.html" />
+    
+    
+    <link rel="prev" href="./" />
+    
+
+    </head>
+    <body>
+        
+<div class="book">
+    <div class="book-summary">
+        
+            
+<div id="book-search-input" role="search">
+    <input type="text" placeholder="Type to search" />
+</div>
+
+            
+                <nav role="navigation">
+                
+
+
+<ul class="summary">
+    
+    
+    
+        
+        <li>
+            <a href="https://gyang274.github.io/capsulesEM/" target="_blank" class="custom-link">Matrix Capsules with EM Routing</a>
+        </li>
+    
+    
+
+    
+    <li class="divider"></li>
+    
+
+    
+        
+        <li class="header">Overview</li>
+        
+        
+    
+        <li class="chapter " data-level="1.1" data-path="./">
+            
+                <a href="./">
+            
+                    
+                    Quick Start
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+        
+        <li class="header">Guide</li>
+        
+        
+    
+        <li class="chapter active" data-level="2.1" data-path="0x00.init.html">
+            
+                <a href="0x00.init.html">
+            
+                    
+                    An Understanding
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.2" data-path="0x01.main.html">
+            
+                <a href="0x01.main.html">
+            
+                    
+                    An Implementation
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.3" data-path="0x02.ende.html">
+            
+                <a href="0x02.ende.html">
+            
+                    
+                    An Optimization
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+        
+        <li class="divider"></li>
+        
+        
+    
+        <li class="chapter " data-level="3.1" >
+            
+                <a target="_blank" href="https://github.com/gyang274/capsulesEM">
+            
+                    
+                    gyang274/capsulesEM.git
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+
+    <li class="divider"></li>
+
+    <li>
+        <a href="https://www.gitbook.com" target="blank" class="gitbook-link">
+            Published with GitBook
+        </a>
+    </li>
+</ul>
+
+
+                </nav>
+            
+        
+    </div>
+
+    <div class="book-body">
+        
+            <div class="body-inner">
+                
+                    
+
+<div class="book-header" role="navigation">
+    
+
+    <!-- Title -->
+    <h1>
+        <i class="fa fa-circle-o-notch fa-spin"></i>
+        <a href="." >An Understanding</a>
+    </h1>
+</div>
+
+
+
+
+                    <div class="page-wrapper" tabindex="-1" role="main">
+                        <div class="page-inner">
+                            
+<div id="book-search-results">
+    <div class="search-noresults">
+    
+                                <section class="normal markdown-section">
+                                
+                                <h2 id="matrix-capsules-with-em-routing---understanding">Matrix Capsules with EM Routing - Understanding</h2>
+<p>This documents my understanding of the recent <strong>matrix capsules</strong> framework proposed in <a href="https://openreview.net/pdf?id=HJWLfGWRb" target="_blank">Matrix Capsules with EM Routing</a>.</p>
+<p>This document assumes you already familiar with the convolution neural network framework, e.g., how conv2d, conv3d works, what are vgg, inception, resnet, and etc.</p>
+<p>It would be beneficial to understand of the <strong>vector capsules</strong> structure, described in <a href="https://arxiv.org/abs/1710.09829" target="_blank">Dynamic Routing Between Capsules</a>, although not necessary.   </p>
+<h3 id="overview">Overview</h3>
+<p>I would value the matrix capsules with EM routing contributes to the current deep learning framework with the following 3 aspects:</p>
+<ol>
+<li><p>The <strong>matrix capsules</strong> use a pose matrix (4x4) and activation (scalar), instead of one scalar number, as the basic unit to describe the activities of hidden features or output.</p>
+<p> Furthermore, compared to the vector capsules, the matrix capsules use a matrix of <script type="math/tex; ">n</script> elements, rather than a vector of length <script type="math/tex; ">n</script>, so its viewpoint transformation matrix requires just <script type="math/tex; ">n</script> parameter, rather than <script type="math/tex; ">n^2</script> in the vector capsules.</p>
+</li>
+<li><p>This work introduces a convolution operation between the capsule layers, e.g., between the adjacent layers of (poses, activations), so that it is possible to build <strong>deep</strong> networks.</p>
+<p> The previous vector capsules paper introduces only fully-connected operations between capsule layers.</p>
+</li>
+<li><p>This work proposes an EM routing algorithm to route weights between inputs capsules and output capsules.</p>
+<p> This EM routing algorithm is more physically and statistically solid than the routing by agreement (agreement on cosine angle) introduced in the vector capsules.   </p>
+</li>
+</ol>
+<p>Let&apos;s take a look on the framework itself.</p>
+
+                                
+                                </section>
+                            
+    </div>
+    <div class="search-results">
+        <div class="has-results">
+            
+            <h1 class="search-results-title"><span class='search-results-count'></span> results matching "<span class='search-query'></span>"</h1>
+            <ul class="search-results-list"></ul>
+            
+        </div>
+        <div class="no-results">
+            
+            <h1 class="search-results-title">No results matching "<span class='search-query'></span>"</h1>
+            
+        </div>
+    </div>
+</div>
+
+                        </div>
+                    </div>
+                
+            </div>
+
+            
+                
+                <a href="./" class="navigation navigation-prev " aria-label="Previous page: Quick Start">
+                    <i class="fa fa-angle-left"></i>
+                </a>
+                
+                
+                <a href="0x01.main.html" class="navigation navigation-next " aria-label="Next page: An Implementation">
+                    <i class="fa fa-angle-right"></i>
+                </a>
+                
+            
+        
+    </div>
+
+    <script>
+        var gitbook = gitbook || [];
+        gitbook.push(function() {
+            gitbook.page.hasChanged({"page":{"title":"An Understanding","level":"2.1","depth":1,"next":{"title":"An Implementation","level":"2.2","depth":1,"path":"0x01.main.md","ref":"0x01.main.md","articles":[]},"previous":{"title":"Quick Start","level":"1.1","depth":1,"path":"README.md","ref":"README.md","articles":[]},"dir":"ltr"},"config":{"plugins":["mathjax","livereload"],"root":"./src","styles":{"website":"css/website.css"},"pluginsConfig":{"mathjax":{"forceSVG":false,"version":"2.6-latest"},"livereload":{},"highlight":{},"search":{},"lunr":{"maxIndexSize":1000000,"ignoreSpecialCharacters":false},"sharing":{"facebook":true,"twitter":true,"google":false,"weibo":false,"instapaper":false,"vk":false,"all":["facebook","google","twitter","weibo","instapaper"]},"fontsettings":{"theme":"white","family":"sans","size":2},"theme-default":{"styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"},"showLevel":false}},"theme":"default","author":"Guang Yang","pdf":{"pageNumbers":true,"fontSize":12,"fontFamily":"Arial","paperSize":"a4","chapterMark":"pagebreak","pageBreaksBefore":"/","margin":{"right":62,"left":62,"top":56,"bottom":56}},"structure":{"langs":"LANGS.md","readme":"README.md","glossary":"GLOSSARY.md","summary":"SUMMARY.md"},"variables":{},"links":{"sidebar":{"Matrix Capsules with EM Routing":"https://gyang274.github.io/capsulesEM/"}},"gitbook":"*"},"file":{"path":"0x00.init.md","mtime":"2017-11-22T19:17:35.000Z","type":"markdown"},"gitbook":{"version":"3.2.3","time":"2017-11-22T16:28:50.065Z"},"basePath":".","book":{"language":""}});
+        });
+    </script>
+</div>
+
+        
+    <script src="gitbook/gitbook.js"></script>
+    <script src="gitbook/theme.js"></script>
+    
+        
+        <script src="https://cdn.mathjax.org/mathjax/2.6-latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+        
+    
+        
+        <script src="gitbook/gitbook-plugin-mathjax/plugin.js"></script>
+        
+    
+        
+        <script src="gitbook/gitbook-plugin-livereload/plugin.js"></script>
+        
+    
+        
+        <script src="gitbook/gitbook-plugin-search/search-engine.js"></script>
+        
+    
+        
+        <script src="gitbook/gitbook-plugin-search/search.js"></script>
+        
+    
+        
+        <script src="gitbook/gitbook-plugin-lunr/lunr.min.js"></script>
+        
+    
+        
+        <script src="gitbook/gitbook-plugin-lunr/search-lunr.js"></script>
+        
+    
+        
+        <script src="gitbook/gitbook-plugin-sharing/buttons.js"></script>
+        
+    
+        
+        <script src="gitbook/gitbook-plugin-fontsettings/fontsettings.js"></script>
+        
+    
+
+    </body>
+</html>
+

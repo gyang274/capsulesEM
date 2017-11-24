@@ -1,0 +1,427 @@
+
+<!DOCTYPE HTML>
+<html lang="" >
+    <head>
+        <meta charset="UTF-8">
+        <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+        <title>An Implementation · GitBook</title>
+        <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+        <meta name="description" content="">
+        <meta name="generator" content="GitBook 3.2.3">
+        <meta name="author" content="Guang Yang">
+        
+        
+    
+    <link rel="stylesheet" href="gitbook/style.css">
+
+    
+            
+                
+                <link rel="stylesheet" href="gitbook/gitbook-plugin-highlight/website.css">
+                
+            
+                
+                <link rel="stylesheet" href="gitbook/gitbook-plugin-search/search.css">
+                
+            
+                
+                <link rel="stylesheet" href="gitbook/gitbook-plugin-fontsettings/website.css">
+                
+            
+        
+
+    
+
+    
+        
+        <link rel="stylesheet" href="css/website.css">
+        
+    
+
+        
+    
+    
+    <meta name="HandheldFriendly" content="true"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <link rel="apple-touch-icon-precomposed" sizes="152x152" href="gitbook/images/apple-touch-icon-precomposed-152.png">
+    <link rel="shortcut icon" href="gitbook/images/favicon.ico" type="image/x-icon">
+
+    
+    <link rel="next" href="0x02.ende.html" />
+    
+    
+    <link rel="prev" href="0x00.init.html" />
+    
+
+    </head>
+    <body>
+        
+<div class="book">
+    <div class="book-summary">
+        
+            
+<div id="book-search-input" role="search">
+    <input type="text" placeholder="Type to search" />
+</div>
+
+            
+                <nav role="navigation">
+                
+
+
+<ul class="summary">
+    
+    
+    
+        
+        <li>
+            <a href="https://gyang274.github.io/capsulesEM/" target="_blank" class="custom-link">Matrix Capsules with EM Routing</a>
+        </li>
+    
+    
+
+    
+    <li class="divider"></li>
+    
+
+    
+        
+        <li class="header">Overview</li>
+        
+        
+    
+        <li class="chapter " data-level="1.1" data-path="./">
+            
+                <a href="./">
+            
+                    
+                    Quick Start
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+        
+        <li class="header">Guide</li>
+        
+        
+    
+        <li class="chapter " data-level="2.1" data-path="0x00.init.html">
+            
+                <a href="0x00.init.html">
+            
+                    
+                    An Understanding
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter active" data-level="2.2" data-path="0x01.main.html">
+            
+                <a href="0x01.main.html">
+            
+                    
+                    An Implementation
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.3" data-path="0x02.ende.html">
+            
+                <a href="0x02.ende.html">
+            
+                    
+                    An Optimization
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+        
+        <li class="divider"></li>
+        
+        
+    
+        <li class="chapter " data-level="3.1" >
+            
+                <a target="_blank" href="https://github.com/gyang274/capsulesEM">
+            
+                    
+                    gyang274/capsulesEM.git
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+    
+
+    <li class="divider"></li>
+
+    <li>
+        <a href="https://www.gitbook.com" target="blank" class="gitbook-link">
+            Published with GitBook
+        </a>
+    </li>
+</ul>
+
+
+                </nav>
+            
+        
+    </div>
+
+    <div class="book-body">
+        
+            <div class="body-inner">
+                
+                    
+
+<div class="book-header" role="navigation">
+    
+
+    <!-- Title -->
+    <h1>
+        <i class="fa fa-circle-o-notch fa-spin"></i>
+        <a href="." >An Implementation</a>
+    </h1>
+</div>
+
+
+
+
+                    <div class="page-wrapper" tabindex="-1" role="main">
+                        <div class="page-inner">
+                            
+<div id="book-search-results">
+    <div class="search-noresults">
+    
+                                <section class="normal markdown-section">
+                                
+                                <h2 id="matrix-capsules-with-em-routing---implementation">Matrix Capsules with EM Routing - Implementation</h2>
+<h3 id="the-framework">The Framework</h3>
+<p>Ok, let me first define some notations for consistency. These should be the common notation.</p>
+<ol>
+<li><p>Tensor with shape [N, H, W, C], often N is the number of samples (batch_size), H is the image height,
+W is the image width, and C is the number of channels. For example, in MNIST, each image is 28x28, with a single channel,
+so a batch size of 128 images would lead to an input tensor of [128, 28, 28, 1].</p>
+</li>
+<li><p>Kernel shape with [KH, KW, I, O], often KH is the kernel height, KW is the kernel width, I is the number of input channels
+and O is the number of output channels, e.g., a 5x5 convolution on the previous [128, 28, 28, 1] to provide 32 channels ouptut
+would require a kernel shape [5, 5, 1, 32]. Of course, we also need strides to determine the output H and W.</p>
+</li>
+<li><p>Tensor with shape [N, H, W, C, PH, PW]. This is a matrix capsules layers, extending from the regular layers, where PH and PW
+are the pose height and pose activation. In this paper, PH = PW = 4.</p>
+</li>
+<li><p>Kernel shape with [KH, KW, I, O, PH, PW]. This is a matrix capsules convolution kernel, extending from the regular kernel,
+where PH and PW are the pose height and pose activation. In this paper, PH = PW = 4.</p>
+</li>
+</ol>
+<p>Now, let&apos;s see how to build a neural network with matrix capsules.</p>
+<p><img src="fig/capsulesEM-Figure1.png" alt="Figure 1"></p>
+<p>To make it clear, let&apos;s names each layer as layerIL (input layer), layerAL, layerBL, layerCL, layerDL, and layerEL, 
+from left to right. In the paper, the author uses A, B, C, D, E to present the number of channels at each layer, so 
+I add an <code>L</code> at the end of layer names to distinguish the name of layer from the number of channels.</p>
+<p>In the following, I will let A=32, B=48, C=64, D=80, and E=10, so that we can distinguish between each layers.
+In the paper, A=B=C=D=32 and E=5. </p>
+<h4 id="overview">Overview</h4>
+<p>In a summary, the shape of each layer and kernel:</p>
+<p>LayerIL: Let&apos;s assume we use MNIST, and have a batch_size 128, [128, 28, 28, 1]</p>
+<p>LayerIL -&gt; LayerAL (A=32): kernel [5, 5, 1, 32], strides [1, 2, 2, 1], ReLU, padding VALID.</p>
+<p>LayerAL: [128, 12, 12, 32]</p>
+<p>LayerAL -&gt; LayerBL (B=48): kernel [1, 1, 32, 48] x (4 x 4 + 1), we need 17 such kernels of [1, 1, 32, 32], 
+16 for building poses and 1 for building activation. In this step, strides are [1, 1, 1, 1].</p>
+<p>LayerBL: pose [128, 12, 12, 48, 4, 4], activation [128, 12, 12, 48]</p>
+<p>LayerBL -&gt; LayerCL (C=64): kernel [3, 3, 48, 64, 4, 4], e.g., K = 3. strides, [1, 2, 2, 1].</p>
+<p>LayerCL: pose [128, 5, 5, 64, 4, 4], activation [128, 5, 5, 64]</p>
+<p>LayerCL -&gt; LayerDL (D=80): kernel [3, 3, 64, 80, 4, 4], strides [1, 1, 1, 1].</p>
+<p>LayerDL: pose [128, 5, 5, 80, 4, 4], activation [128, 5, 5, 80]</p>
+<p>LayerDL -&gt; LayerEL (E=10), <code>kernel</code> [1, 1, 80, 10, 4, 4], FC-EM. This is different from the layerBL-&gt;layerCL and layerCL-&gt;layerDL.
+In layerBL-&gt;layerCL and layerCL-&gt;layerDL, the EM is within the 3 (kernel KH) x 3 (kernel KW) x 48 or 3 x 3 x 64. In layerDL-&gt;layerEL, the EM is within 
+5 (entire H) x 5 (entire W) x 80.</p>
+<p>LayerEL -&gt; pose [128, 10, 4, 4], activation [128, 10].</p>
+<h4 id="layeril---layeral">LayerIL -&gt; LayerAL</h4>
+<p>LayerIL: Let&apos;s assume we use MNIST, and have a batch_size 128, [128, 28, 28, 1]</p>
+<p>LayerIL -&gt; LayerAL (A=32): kernel [5, 5, 1, 32], strides [1, 2, 2, 1], ReLU, padding VALID.</p>
+<p>This is a regular convoluation operation between layerIL and layerAL.</p>
+<h4 id="layeral---layerbl">LayerAL -&gt; LayerBL</h4>
+<p>LayerAL: [128, 12, 12, 32]</p>
+<p>LayerAL -&gt; LayerBL (B=48): kernel [1, 1, 32, 48] x (4 x 4 + 1), we need 17 such kernels of [1, 1, 32, 32], 
+16 for building poses and 1 for building activation. In this step, strides are [1, 1, 1, 1].</p>
+<p>This involves how to build a primary capsules from a regular convolution layer.</p>
+<p>Let&apos;s imagine we do the regular convolution with kernel [1, 1, 32, 48]. Do it once, we obtain
+a layerBL0, with [128, 12, 12, 48]. </p>
+<p>We repeat this 16 times, then we have layerBL0, ..., layerBL15, each has the shape [128, 12, 12, 48]. </p>
+<p>We can stack layerBL0, layerBL1, layerBL2, layerBL3 into a tensor of [128, 12, 12, 48, 4], call it layerBL-S0.
+We can stack layerBL4, layerBL5, layerBL6, layerBL7 into a tensor of [128, 12, 12, 48, 4], call it layerBL-S1.
+We can stack layerBL8, layerBL9, layerBL10, layerBL11 into a tensor of [128, 12, 12, 48, 4], call it layerBL-S2.
+We can stack layerBL12, layerBL13, layerBL14, layerBL15 into a tensor of [128, 12, 12, 48, 4], call it layerBL-S3.</p>
+<p>We can then stack layerBL-S0, layerBL-S1, layerBL-S2, and layerBL-S3 into [128, 12, 12, 48, 4, 4].</p>
+<p>Of course, in practice, it is equivalent to use a kernel [1, 1, 32, 48 x 16] to get an output [128, 12, 12, 48 x 16],
+and reshape it to [128, 12, 12, 48, 4, 4].</p>
+<p>The activation is obtained use kernel [1, 1, 32, 48], strides [1, 1, 1, 1], no bias added, and tf.sigmoid as activation 
+function. </p>
+<p>LayerBL: pose [128, 12, 12, 48, 4, 4], activation [128, 12, 12, 48]</p>
+<p>LayerBL -&gt; LayerCL (C=64): kernel [3, 3, 48, 64, 4, 4], e.g., K = 3. strides, [1, 2, 2, 1].</p>
+<h4 id="conv-layerbl---layercl-c64">Conv: LayerBL -&gt; LayerCL (C=64)</h4>
+<p>LayerBL: pose [128, 12, 12, 48, 4, 4], activation [128, 12, 12, 48]</p>
+<p>LayerBL -&gt; LayerCL (C=64): kernel [3, 3, 48, 64, 4, 4], e.g., K = 3. strides, [1, 2, 2, 1].</p>
+<p>This is the key part, the convolution operation between matrix capsules.</p>
+<p>The inputs are pose [128, 12, 12, 48, 4, 4], and activation [128, 12, 12, 48]</p>
+<p>We first initialize the weight matrix W [128, 3, 3, 48, 4, 4]</p>
+<p>Take a sub-region (the K x K blue region in layerBL), do the pose-vote transformation, and use vote, activation for EM routing.</p>
+<p>In specific,</p>
+<pre><code>for hh in (0, 2, 4, ... 8):
+    for ww in (0, 2, 4, ..., 8):
+        inputs_pose_slice = inputs_pose[:, hh:(hh+3), ww:(ww+3), :, :, :]
+        # inputs_pose_slice is [N, KH, KW, I, PH, PW]
+        # expand dim of input_pose_slice to [N, KH, KW, I, 1, PH, PW]
+        inputs_pose_slice_expansion = tf.expand_dims(inputs_pose_slice, axis=4)
+        # inputs_vote [N, KH, KW, I, O, PH, PW]
+        inputs_vote = inputs_pose_slice_expansion x W
+        # use inputs_vote, inputs_activation to obtain output pose, activation
+        # pose is [N, 1, 1, O, PH, PW], activation is [N, 1, 1, O]
+        # this are the pose and activation at one position across all channels
+        pose, activation = matrix_em_routing(inputs_vote, inputs_activation)
+# the double for loop is building layerCL one at a time.
+</code></pre><h4 id="fc-layerdl---layerel-e10">FC: LayerDL -&gt; LayerEL (E=10)</h4>
+<p>This is confusing from the figure that the Kernel seems to have [1, 1, 80, 10],
+so the output layer should be [128, 5, 5, 10, 4, 4], instead of [128, 10, 4, 4].</p>
+<p>The reason is this is really a fully-connected layer, <strong>with shared kernel weight of [1, 1, 80, 10]</strong>.</p>
+<p>In specific, we initialize a kernel weight of [1, 1, 80, 10], at each 1 x 1 patch of input, say, [128, 0:1, 0:1, 80, 4, 4], 
+we expand dimension of that input slice, and multiply with the weight to have the vote. 
+Thus, we have the vote [128, 5, 5, 80, 10, 4, 4]. We reshape the vote into [128, 5 x 5 x 80, 10, 4, 4],
+and we reshape the inputs activation into [128, 5 x 5 x 80].</p>
+<p>Then, we use the EM routing to obtain the output pose [128, 10, 4, 4] and activation [128, 10].</p>
+<p>In summary, the difference is</p>
+<ol>
+<li><p>From the layerBL-&gt;layerCL and layerCL-&gt;layerDL, the kernel is [K, K, I, O, PH, PW], 
+the weights are shared between difference slice. </p>
+<p> In layerDL-&gt;layerEL, the kernel is [K = 1, K = 1, I, O, PH, PW] to ensure that <strong>share the transformation
+ matrices between different positions of the same capsule type.</strong></p>
+</li>
+<li><p>From the layerBL-&gt;layerCL and layerCL-&gt;layerDL, the EM is within the 3 (kernel KH) x 3 (kernel KW) x 48 or 3 x 3 x 64. </p>
+<p> In layerDL-&gt;layerEL, the EM is within 5 (entire H) x 5 (entire W) x 80.</p>
+</li>
+</ol>
+<p>Note: remember to add scaled coordinate to the first two elements of its vote.</p>
+<h3 id="the-em-routing">The EM Routing</h3>
+<p>As discussed, the inputs are votes [N, KH, KW, I, O, PH, PW] and activations [N, KH, KW, I].</p>
+<p>In paper, the author describes the EM routing algorithm in a way that in 
+M-step, updating one output mean ($\mu$), ($\simga$) and activation (a) using all inputs to this outputs
+routing value (R<em>{:c:}) and vote (V</em>{:c:}).
+In E-step, updating the routing of one input to all outputs.</p>
+<p>Here, in  I change the order of inputs, vote first, then activation. vote is the V tensor, activation is the a vector in paper.
+I also assume inputs vote, acitvations are tensors with votes reshaped into [N, KH x KW x I, O, PH x PW], 
+inputs activations reshaped into [N, KH x KW x I, 1, 1]. I will describe the algorithm in a vectorized way.</p>
+<pre><code>matrix_em_routing(vote, i_activation):
+</code></pre>
+                                
+                                </section>
+                            
+    </div>
+    <div class="search-results">
+        <div class="has-results">
+            
+            <h1 class="search-results-title"><span class='search-results-count'></span> results matching "<span class='search-query'></span>"</h1>
+            <ul class="search-results-list"></ul>
+            
+        </div>
+        <div class="no-results">
+            
+            <h1 class="search-results-title">No results matching "<span class='search-query'></span>"</h1>
+            
+        </div>
+    </div>
+</div>
+
+                        </div>
+                    </div>
+                
+            </div>
+
+            
+                
+                <a href="0x00.init.html" class="navigation navigation-prev " aria-label="Previous page: An Understanding">
+                    <i class="fa fa-angle-left"></i>
+                </a>
+                
+                
+                <a href="0x02.ende.html" class="navigation navigation-next " aria-label="Next page: An Optimization">
+                    <i class="fa fa-angle-right"></i>
+                </a>
+                
+            
+        
+    </div>
+
+    <script>
+        var gitbook = gitbook || [];
+        gitbook.push(function() {
+            gitbook.page.hasChanged({"page":{"title":"An Implementation","level":"2.2","depth":1,"next":{"title":"An Optimization","level":"2.3","depth":1,"path":"0x02.ende.md","ref":"0x02.ende.md","articles":[]},"previous":{"title":"An Understanding","level":"2.1","depth":1,"path":"0x00.init.md","ref":"0x00.init.md","articles":[]},"dir":"ltr"},"config":{"plugins":["mathjax","livereload"],"root":"./src","styles":{"website":"css/website.css"},"pluginsConfig":{"mathjax":{"forceSVG":false,"version":"2.6-latest"},"livereload":{},"highlight":{},"search":{},"lunr":{"maxIndexSize":1000000,"ignoreSpecialCharacters":false},"sharing":{"facebook":true,"twitter":true,"google":false,"weibo":false,"instapaper":false,"vk":false,"all":["facebook","google","twitter","weibo","instapaper"]},"fontsettings":{"theme":"white","family":"sans","size":2},"theme-default":{"styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"},"showLevel":false}},"theme":"default","author":"Guang Yang","pdf":{"pageNumbers":true,"fontSize":12,"fontFamily":"Arial","paperSize":"a4","chapterMark":"pagebreak","pageBreaksBefore":"/","margin":{"right":62,"left":62,"top":56,"bottom":56}},"structure":{"langs":"LANGS.md","readme":"README.md","glossary":"GLOSSARY.md","summary":"SUMMARY.md"},"variables":{},"links":{"sidebar":{"Matrix Capsules with EM Routing":"https://gyang274.github.io/capsulesEM/"}},"gitbook":"*"},"file":{"path":"0x01.main.md","mtime":"2017-11-22T17:01:21.000Z","type":"markdown"},"gitbook":{"version":"3.2.3","time":"2017-11-22T16:28:50.065Z"},"basePath":".","book":{"language":""}});
+        });
+    </script>
+</div>
+
+        
+    <script src="gitbook/gitbook.js"></script>
+    <script src="gitbook/theme.js"></script>
+    
+        
+        <script src="https://cdn.mathjax.org/mathjax/2.6-latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+        
+    
+        
+        <script src="gitbook/gitbook-plugin-mathjax/plugin.js"></script>
+        
+    
+        
+        <script src="gitbook/gitbook-plugin-livereload/plugin.js"></script>
+        
+    
+        
+        <script src="gitbook/gitbook-plugin-search/search-engine.js"></script>
+        
+    
+        
+        <script src="gitbook/gitbook-plugin-search/search.js"></script>
+        
+    
+        
+        <script src="gitbook/gitbook-plugin-lunr/lunr.min.js"></script>
+        
+    
+        
+        <script src="gitbook/gitbook-plugin-lunr/search-lunr.js"></script>
+        
+    
+        
+        <script src="gitbook/gitbook-plugin-sharing/buttons.js"></script>
+        
+    
+        
+        <script src="gitbook/gitbook-plugin-fontsettings/fontsettings.js"></script>
+        
+    
+
+    </body>
+</html>
+
