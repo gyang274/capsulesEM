@@ -15,6 +15,14 @@ epsilon = 1e-9
 # ------------------------------------ init ------------------------------------#
 # ------------------------------------------------------------------------------#
 
+def _matmul_broadcast(x, y, name):
+  """Compute x @ y, broadcasting over the first `N - 2` ranks
+  """
+  with tf.variable_scope(name) as scope:
+    return tf.reduce_sum(
+      x[..., tf.newaxis] * y[..., tf.newaxis, :, :], axis=-2
+    )
+
 def _get_variable_wrapper(
   name, shape=None, dtype=None, initializer=None,
   regularizer=None,
@@ -232,11 +240,6 @@ def capsule_init(inputs, shape, strides, padding, pose_shape, name):
   return poses, activations
 
 
-
-
-
-
-
 def capsule_conv(inputs, shape, strides, inverse_temperature, iterations, name):
   """This constructs a convolution capsule layer from a primary or convolution capsule layer.
 
@@ -266,335 +269,174 @@ def capsule_conv(inputs, shape, strides, inverse_temperature, iterations, name):
     weight kernel shape [3, 3, C, D], strides [1, 1, 1, 1], pose_shape [4, 4]
   """
 
-  inputs_pose, inputs_activation = inputs
+  inputs_poses, inputs_activations = inputs
 
-  inputs_pose_shape = inputs_pose.get_shape().as_list()
+  inputs_poses_shape = inputs_poses.get_shape().as_list()
 
-  inputs_activation_shape = inputs_activation.get_shape().as_list()
+  inputs_activations_shape = inputs_activations.get_shape().as_list()
 
-  # TODO: allow shape I < inputs pose C and relax strides[3] == 1
-  assert shape[2] == inputs_pose_shape[3]
+  assert shape[2] == inputs_poses_shape[3]
   assert strides[0] == strides[-1] == 1
 
-  # note: in paper, 1.1 Previous work on capsules:
-  # 3. It uses a vector of length n rather than a matrix with n elements to represent a pose, so its
-  # transformation matrices have n^2 parameters rather than just n.
+  # note: with respect to the paper, matrix capsules with EM routing, 1.1 previous work on capsules:
+  # 3. it uses a vector of length n rather than a matrix with n elements to represent a pose, so its transformation matrices have n^2 parameters rather than just n.
 
-  # this explicit express a matrix 4 x 4 should be use as a viewpoint transformation matrix to adjust pose.
+  # this explicit express a matrix PH x PW should be use as a viewpoint transformation matrix to adjust pose.
 
-  # TODO: vectorize the operation, or parallel this double for loop (the core covolution between capsule layers)
-
-  # figure out the number of scan
   with tf.variable_scope(name) as scope:
-    # init beta_v and beta_a
-    beta_v = _get_weights_wrapper(name='beta_v', shape=[])
-    beta_a = _get_weights_wrapper(name='beta_a', shape=[])
-    # kernel: [1, KH, KW, I, O, PH, PW]
+
+    # kernel: [KH, KW, I, O, PH, PW]
     kernel = _get_weights_wrapper(
-      name='pose_view_transform_weights', shape=[1] + shape + inputs_pose_shape[-2:]
+      name='pose_view_transform_weights', shape=shape + inputs_poses_shape[-2:]
     )
-    # note: tf.matmul doesn't support for broadcasting at this moment, manual tile to match with inputs_pose_slice_expansion on each dimension.
-    # https://github.com/tensorflow/tensorflow/issues/216
-    kernel = tf.tile(
-      kernel, [inputs_pose_shape[0], 1, 1, 1, 1, 1, 1], name='pose_view_transform_weights_batch'
+
+    # note: https://github.com/tensorflow/tensorflow/issues/216
+    # tf.matmul doesn't support for broadcasting at this moment, work around with _matmul_broadcast().
+    # construct conv patches (this should be a c++ dedicated function support for capsule convolution)
+    hk_offsets = [
+      [(h_offset + k_offset) for k_offset in range(0, shape[0])] for h_offset in
+      range(0, inputs_poses_shape[1] + 1 - shape[0], strides[1])
+    ]
+    wk_offsets = [
+      [(w_offset + k_offset) for k_offset in range(0, shape[1])] for w_offset in
+      range(0, inputs_poses_shape[2] + 1 - shape[1], strides[2])
+    ]
+
+    # inputs_poses [N, H, W, I, PH, PW] patches into [N, OH, OW, KH, KW, I, 1, PH, PW]
+    # where OH, OW are output height and width determined by H, W, shape and strides,
+    # and KH and KW are kernel height and width determined by shape
+    inputs_poses_patches = tf.transpose(
+      tf.gather(
+        tf.gather(
+          inputs_poses, hk_offsets, axis=1, name='gather_poses_height_kernel'
+        ), wk_offsets, axis=3, name='gather_poses_width_kernel'
+      ), perm=[0, 1, 3, 2, 4, 5, 6, 7], name='inputs_poses_patches'
     )
-    # apply same kernel to each (h_offset, w_offset) - weights share in convolution.
-    pose = []; activation = []
-    for h_offset in xrange(0, inputs_pose_shape[1] + 1 - shape[0], strides[1]):
-      pose_wire = []; activation_wire = []
-      for w_offset in xrange(0, inputs_pose_shape[2] + 1 - shape[1], strides[2]):
-        vote_unit = []
-        # at each offset K x K x I x PH x PW
-        # inputs_pose_slice: [N, KH, KW, I, PH, PW]
-        # slice inputs_pose [N, H, W, C, PH, PW] at (h_offset, w_offset) with KH x KW and with C == I
-        inputs_pose_slice = inputs_pose[:, h_offset:(h_offset+shape[0]), w_offset:(w_offset+shape[1]), :, :, :]
-        # inputs_pose_slice: [N, KH, KW, I, 1, PH, PW]
-        # inputs_pose_slice_expansion: expand inputs_pose_slice dimension to match with kernel for broadcasting,
-        # so that we can create output capsules at one offset (h_offset, w_offset) across all channels O at once.
-        inputs_pose_slice_expansion = tf.expand_dims(
-          inputs_pose_slice, axis=4, name='inputs_pose_slice_expansion'
-        )
-        # vote_unit: [N, KH, KW, I, O, PH, PW]
-        # inputs_pose_slice_expansion matmul with kernel (view transform) becomes vote_unit
-        # note: tf.matmul doesn't support for broadcasting at this moment, manual tile to match on each dimension.
-        # https://github.com/tensorflow/tensorflow/issues/216
-        vote_unit = tf.matmul(
-          tf.tile(inputs_pose_slice_expansion, [1, 1, 1, 1, shape[-1], 1, 1]), kernel, name='pose_view_transform_vote'
-        )
-        vote_unit_shape = vote_unit.get_shape().as_list()
-        # vote_unit: reshape into [N, KH, KW, I, O, PH x PW]
-        vote_unit = tf.reshape(
-          vote_unit, vote_unit_shape[:-2] + [vote_unit_shape[-2] * vote_unit_shape[-1]]
-        )
-        # vote_unit: reshape into [N, KH x KW x I, O, PH x PW]
-        vote_unit = tf.reshape(
-          vote_unit, [vote_unit_shape[0], vote_unit_shape[1] * vote_unit_shape[2] * vote_unit_shape[3], vote_unit_shape[4], vote_unit_shape[5] * vote_unit_shape[6]]
-        )
-        # inputs_activation_unit: [N, KH, KW, I]
-        inputs_activation_unit = inputs_activation[:, h_offset:(h_offset+shape[0]), w_offset:(w_offset+shape[1]), :]
-        # inputs_activation_unit: reshape into [N, KH x KW x I]
-        inputs_activation_unit = tf.reshape(
-          inputs_activation_unit, [inputs_activation_shape[0], shape[0] * shape[1] * inputs_activation_shape[-1]]
-        )
-        # vote_unit, inputs_activaiton_unit -> EM -> output_pose_unit, output_activation_unit
-        # this operation involves inputs and output capsules at one (h_offset, w_offset) across all channels
-        # pose_unit: [N, O, PH x PW]
-        # activation_unit: [N, O]
-        pose_unit, activation_unit = matrix_capsule_em_routing(
-          vote_unit, inputs_activation_unit, beta_v, beta_a, inverse_temperature, iterations, name=name+'_em_'+str(h_offset)+'_'+str(w_offset)
-        )
-        # pose_unit: reshape to [N, O, PH, PW]
-        pose_unit = tf.reshape(
-          pose_unit, [vote_unit_shape[0]] + vote_unit_shape[4:]
-        )
-        pose_wire.append(pose_unit)
-        activation_wire.append(activation_unit)
-      # pose_wire: list with OW of [N, O, PH, PW] tensors, where OW is determined by W and strides
-      pose.append(tf.stack(pose_wire, axis=1))
-      # activation_wire: list with OW of [N, O] tensors, where OW is determined by W and strides
-      activation.append(tf.stack(activation_wire, axis=1))
-    # pose: list with OH of [N, OW, O, PH, PW] tensors, where OH is determinded by H and strides
-    # pose: stack into [N, OH, OW, O, PH, PW]
-    pose = tf.stack(pose, axis=1, name='pose')
-    # activation: list with OH of [N, OW, O] tensors, where OH is determinded by H and strides
-    # activation: stack into [N, OH, OW, O]
-    activation = tf.stack(activation, axis=1, name='activation')
-
-  return pose, activation
-
-
-def matrix_capsule_em_routing(vote, i_activation, beta_v, beta_a, inverse_temperature, iterations, name):
-  """The EM routing between input capsules (i) and output capsules (o).
-
-  :param vote:
-  :param i_activation:
-  :param beta_v:
-  :param beta_a:
-  :param inverse_temperature:
-  :param iterations:
-
-  :return: (pose, activation) of output capsules.
-  """
-
-  # vote: [N, KH x KW x I, O, PH x PW]
-  vote_shape = vote.get_shape().as_list()
-  # i_activation: [N, KH x KW x I]
-  i_activation_shape = i_activation.get_shape().as_list()
-
-  with tf.variable_scope(name) as scope:
-
-    # rr: [N, KH x KW x I, O, 1],
-    # rr: routing matrix from each input capsule (i) to each output capsule (o)
-    rr = tf.constant(
-      1.0/vote_shape[2], shape=vote_shape[:-1] + [1], dtype=tf.float32
+    # inputs_poses_patches expand dimensions from [N, OH, OW, KH, KW, I, PH, PW] to [N, OH, OW, KH, KW, I, 1, PH, PW]
+    inputs_poses_patches = inputs_poses_patches[..., tf.newaxis, :, :]
+    # inputs_votes: [N, OH, OW, KH, KW, I, O, PH, PW]
+    # inputs_votes should be the inputs_poses_patches multiply with the kernel view transformation matrix
+    votes = _matmul_broadcast(
+      inputs_poses_patches, kernel, name='votes'
     )
-    # rr = tf.Print(
-    #   rr, [rr.shape, rr[0, :, :, :]], 'rr', summarize=20
-    # )
-
-    # i_activation: expand to [N, KH x KW x I, 1, 1]
-    i_activation = tf.expand_dims(
-      tf.expand_dims(
-        i_activation, axis=-1, name='i_activation_expansion_0'
-      ), axis=-1, name='i_activation_expansion_1'
+    votes_shape = votes.get_shape().as_list()
+    # inputs_votes: reshape into [N, OH, OW, KH x KW x I, O, PH x PW]
+    votes = tf.reshape(
+      votes, [
+        votes_shape[0],  votes_shape[1],  votes_shape[2],
+        votes_shape[3] * votes_shape[4] * votes_shape[5],
+        votes_shape[6],  votes_shape[7] * votes_shape[8]
+      ]
     )
-    # i_activation = tf.Print(
-    #   i_activation, [i_activation.shape, i_activation[0, :, :, :]], 'i_activation', summarize=20
-    # )
 
-    # note: match rr shape, i_activation shape with shape vote for broadcasting in EM
+    # inputs_activations: [N, H, W, I] patches into [N, OH, OW, KH, KW, I]
+    inputs_activations_patches = tf.transpose(
+      tf.gather(
+        tf.gather(
+          inputs_activations, hk_offsets, axis=1, name='gather_activations_height_kernel'
+        ), wk_offsets, axis=3, name='gather_activations_width_kernel'
+      ), perm=[0, 1, 3, 2, 4, 5], name='inputs_activations_patches'
+    )
+    # inputs_activations: [N, OH, OW, KH, KW, I] reshape into [N, OH, OW, KH x KW x I]
+    # re-use votes_shape so that make sure the votes and i_activations shape match each other.
+    i_activations = tf.reshape(
+      inputs_activations_patches, [
+        votes_shape[0],  votes_shape[1],  votes_shape[2],
+        votes_shape[3] * votes_shape[4] * votes_shape[5]
+      ]
+    )
 
-    def m_step(rr, vote, i_activation, beta_v, beta_a, inverse_temperature):
-      """The M-Step in EM Routing.
+    # beta_v and beta_a one for each output capsule: [N, OH, OW, O]
+    beta_v = _get_weights_wrapper(
+      name='beta_v', shape=[
+        votes_shape[0], votes_shape[1], votes_shape[2], votes_shape[6]
+      ]
+    )
+    beta_a = _get_weights_wrapper(
+      name='beta_a', shape=[
+        votes_shape[0], votes_shape[1], votes_shape[2], votes_shape[6]
+      ]
+    )
 
-      :param rr: [N, KH x KW x I, O, 1] routing from each input capsules (i) to each output capsules (o).
-      :param vote: [N, KH x KW x I, O, PH x PW] input capsules pose x view transformation.
-      :param i_activation: [N, KH x KW x I, 1, 1] input capsules activations, with dimensions expanded to match vote for broadcasting.
-      :param beta_v: constant, cost of describing capsules with one variance in each h-th compenents, should be learned discriminatively.
-      :param beta_a: constant, cost of describing capsules with one mean in across all h-th compenents, should be learned discriminatively.
-      :param inverse_temperature: lambda, increase at each iteration with a fixed schedule.
+    # output poses and activations via matrix capsules_em_routing algorithm
+    # this operation involves inputs and output capsules across all (hk_offsets, wk_offsets), across all channels
+    # poses: [N, OH, OW, O, PH x PW], activations: [N, OH, OW, O]
+    poses, activations = matrix_capsules_em_routing(
+      votes, i_activations, beta_v, beta_a, inverse_temperature, iterations, name='em_routing'
+    )
+    # poses: [N, OH, OW, O, PH, PW]
+    poses = tf.reshape(
+      poses, [
+        votes_shape[0], votes_shape[1], votes_shape[2], votes_shape[6], votes_shape[7], votes_shape[8]
+      ]
+    )
 
-      :return: (o_mean, o_stdv, o_activation)
-      """
-
-      # rr_prime: [N, KH x KW x I, O, 1]
-      rr_prime = rr * i_activation
-      # rr_prime = tf.Print(
-      #   rr_prime, [rr_prime.shape, rr_prime[0, :, 0, :]], 'mstep: rr_prime', summarize=20
-      # )
-
-      # rr_prime_sum: sum acorss i, [N, 1, O, 1]
-      rr_prime_sum = tf.reduce_sum(
-        rr_prime, axis=1, keep_dims=True, name='rr_prime_sum'
-      )
-      # rr_prime_sum = tf.Print(
-      #   rr_prime_sum, [rr_prime_sum.shape, rr_prime_sum[0, :, :, :]], 'mstep: rr_prime_sum', summarize=20
-      # )
-
-      # vote: [N, KH x KW x I, O, PH x PW]
-      # rr_prime: [N, KH x KW x I, O, 1]
-      # rr_prime_sum: [N, 1, O, 1]
-      # o_mean: [N, 1, O, PH x PW]
-      o_mean = tf.reduce_sum(
-        rr_prime * vote, axis=1, keep_dims=True
-      ) / rr_prime_sum
-      # o_mean = tf.Print(o_mean, [o_mean.shape, o_mean[0, :, :, :]], 'mstep: o_mean', summarize=20)
-      # o_stdv: [N, 1, O, PH x PW]
-      o_stdv = tf.sqrt(
-        tf.reduce_sum(
-          rr_prime * tf.square(vote - o_mean), axis=1, keep_dims=True
-        ) / rr_prime_sum
-      )
-      # o_stdv = tf.Print(o_stdv, [o_stdv.shape, o_stdv[0, :, :, :]], 'mstep: o_stdv', summarize=20)
-      # o_cost: [N, 1, O, PH x PW]
-      o_cost = (beta_v + tf.log(o_stdv + epsilon)) * rr_prime_sum
-      # o_cost = tf.Print(o_cost, [beta_v, o_cost.shape, o_cost[0, :, :, :]], 'mstep: beta_v, o_cost', summarize=20)
-      # o_activation: [N, 1, O, 1]
-      o_activation_cost = (beta_a - tf.reduce_sum(o_cost, axis=-1, keep_dims=True))
-      # try to find a good inverse_temperature, for o_activation,
-      # o_activation_cost = tf.Print(
-      #   o_activation_cost, [inverse_temperature, beta_a, o_activation_cost.shape, o_activation_cost[0, :, :, :]], 'mstep: inverse_temperature, beta_a, o_activation_cost', summarize=20
-      # )
-      o_activation = tf.sigmoid(
-        inverse_temperature * o_activation_cost
-      )
-      # o_activation = tf.Print(o_activation, [o_activation.shape, o_activation[0, :, :, :]], 'mstep: o_activation', summarize=20)
-
-      return o_mean, o_stdv, o_activation
-
-    def e_step(o_mean, o_stdv, o_activation, vote):
-      """The E-Step in EM Routing.
-
-      :param o_mean: [N, 1, O, PH x PW]
-      :param o_stdv: [N, 1, O, PH x PW]
-      :param o_activation: [N, 1, O, 1]
-      :param vote: [N, KH x KW x I, O, PH x PW]
-
-      :return: rr
-      """
-
-      # vote: [N, KH x KW x I, O, PH x PW]
-      vote_shape = vote.get_shape().as_list()
-      # vote = tf.Print(vote, [vote.shape, vote[0, :, :, :]], 'estep: vote', summarize=20)
-      # o_p: [N, KH x KW x I, O, 1]
-      # o_p is the probability density of the h-th component of the vote from i to c
-
-      # o_p: version 0
-      o_p_unit0 = - tf.reduce_sum(
-        tf.square(vote - o_mean) / (2 * tf.square(o_stdv)), axis=-1, keep_dims=True
-      )
-      # o_p_unit0 = tf.Print(o_p_unit0, [o_p_unit0.shape, o_p_unit0[0, :, :, :]], 'estep: o_p_unit0', summarize=20)
-      # o_p_unit1 = - tf.log(
-      #   0.50 * vote_shape[-1] * tf.log(2 * pi) + epsilon
-      # )
-      # o_p_unit1 = tf.Print(o_p_unit1, [o_p_unit1.shape, o_p_unit1], 'estep: o_p_unit1', summarize=20)
-      o_p_unit2 = - tf.reduce_sum(
-        tf.log(o_stdv + epsilon), axis=-1, keep_dims=True
-      )
-      # o_p_unit2 = tf.Print(o_p_unit2, [o_p_unit2.shape, o_p_unit2[0, :, :, :]], 'estep: o_p_unit2', summarize=20)
-      # o_p = tf.exp(
-      #   o_p_unit0 + o_p_unit1 + o_p_unit2
-      # )
-      # o_p = tf.Print(o_p, [o_p.shape, o_p[0, :, :, :]], 'estep: o_p', summarize=20)
-      # # rr: [N, KH x KW x I, O, 1]
-      # rr = o_activation * o_p
-      # rr = tf.Print(rr, [rr.shape, rr[0, :, :, :]], 'estep: rr before division', summarize=20)
-      # rr = rr / tf.reduce_sum(rr, axis=2, keep_dims=True)
-      # rr = tf.Print(rr, [rr.shape, rr[0, :, :, :]], 'estep: rr after division', summarize=20)
-
-      # o_p: version 1: numerical stable
-      o_p = o_p_unit0 + o_p_unit2
-      # o_p = tf.Print(o_p, [o_p.shape, o_p[0, :, :, :]], 'estep: o_p', summarize=20)
-      rr = tf.log(o_activation + epsilon) + o_p
-      # rr = tf.Print(rr, [rr.shape, rr[0, :, :, :]], 'estep: rr before softmax', summarize=20)
-      rr = tf.nn.softmax(rr, dim=2)
-      # rr = tf.Print(rr, [rr.shape, rr[0, :, :, :]], 'estep: rr after softmax', summarize=20)
-
-      return rr
-
-    for t in xrange(iterations):
-      o_mean, o_stdv, o_activation = m_step(
-        rr, vote, i_activation, beta_v, beta_a, inverse_temperature
-      )
-      if t < iterations - 1:
-        rr = e_step(
-          o_mean, o_stdv, o_activation, vote
-        )
-
-    # pose: [N, O, PH x PW]
-    pose = tf.squeeze(o_mean, axis=1)
-
-    # activation: [N, O]
-    activation = tf.squeeze(o_activation, axis=[1, -1])
-
-  return pose, activation
+  return poses, activations
 
 
 def capsule_fc(inputs, num_classes, inverse_temperature, iterations, name):
-  """This constructs a fully-connected layer from convolution capsule layer to output capsule layer.
+  """This constructs an output layer from a primary or convolution capsule layer via
+    a full-connected operation with one view transformation kernel matrix shared across each channel.
 
-  :param inputs: a primary or convolution capsule layer with pose and activation,
-    pose shape [N, H, W, C, PH, PW], activation shape [N, H, W, C]
+  :param inputs: a primary or convolution capsule layer with poses and activations,
+    poses shape [N, H, W, C, PH, PW], activations shape [N, H, W, C]
   :param num_classes: number of classes.
+  :param inverse_temperature: inverse temperature, \lambda,
+    often determined by the a fix schedule w.r.t global_steps.
+  :param iterations: number of iterations in EM routing, often 3.
+  :param name: name.
 
-  :return: (pose, activation)
+  :return: (pose, activation) same as capsule_init().
 
-  note:
-    This is the D -> E in paper.
+  note: with respect to the paper, matrix capsules with EM routing, figure 1,
+    This is the D -> E in figure.
     This step includes two major sub-steps:
-      1. Apply a shared view transform weight matrix PH x PW (4 x 4) to the same input channel.
-        (This is why in D it has 1 x 1, and why the weight are D x E x 4 x 4)
+      1. Apply one view transform weight matrix PH x PW (4 x 4) to each input channel, this view transform matrix is
+        shared across (height, width) locations. This is the reason the kernel labelled in D has 1 x 1, and the reason
+        the number of variables of weights is D x E x 4 x 4.
       2. Re-struct the inputs vote from [N, H, W, I, PH, PW] into [N, H x W x I, PH x PW],
         add scaled coordinate on first two elements, EM routing an output [N, O, PH x PW],
         and reshape output [N, O, PH, PW].
     The difference between fully-connected layer and convolution layer, is that:
-      1. The corresponding KH, KW in this fully-connected here is actually the whole H, W, not 1, 1.
+      1. The corresponding kernel size KH, KW in this fully-connected here is actually the whole H, W, instead of 1, 1.
       2. The view transformation matrix is shared within KH, KW (i.e., H, W) in this fully-connected layer,
         whereas in the convolution capsule layer, the view transformation can be different for each capsule
-        in the KH, KW, but shared across (KH, KW, I, O, PH, PW).
+        in the KH, KW, but shared across different (height, width) locations.
   """
 
-  inputs_pose, inputs_activation = inputs
+  inputs_poses, inputs_activations = inputs
 
-  inputs_pose_shape = inputs_pose.get_shape().as_list()
+  inputs_poses_shape = inputs_poses.get_shape().as_list()
 
-  inputs_activation_shape = inputs_activation.get_shape().as_list()
+  inputs_activations_shape = inputs_activations.get_shape().as_list()
 
   with tf.variable_scope(name) as scope:
-    # init beta_v and beta_a
-    beta_v = _get_weights_wrapper(name='beta_v', shape=[])
-    beta_a = _get_weights_wrapper(name='beta_a', shape=[])
-    # note: in paper:
-    # share the transformation matrices between different positions of the same capsule type,
-    # and add the scaled coordinate (row, column) of the center of the receptive field of each capsule to the first two elements of its vote
-    # kernel: [1, 1, 1, I, O, PH, PW]
+
+    # kernel: [I, O, PH, PW]
     kernel = _get_weights_wrapper(
-      name='pose_view_transform_weights',
-      shape=[1, 1, 1, inputs_pose_shape[3], num_classes] + inputs_pose_shape[-2:],
-      weights_decay_factor=0.0
-    )
-    kernel = tf.tile(
-      kernel, inputs_pose_shape[0:3]+ [1, 1, 1, 1], name='pose_view_transform_weights_batch'
-    )
-    # inputs_pose_expansion: [N, H, W, I, 1, PH, PW]
-    # inputs_pose_expansion: expand inputs_pose dimension to match with kernel for broadcasting,
-    # share the transformation matrices as kernel (1, 1) broadcasting to inputs pose expansion (H, W)
-    inputs_pose_expansion = tf.expand_dims(
-      inputs_pose, axis=4, name='inputs_pose_expansion'
-    )
-    # vote: [N, H, W, I, O, PH, PW]
-    vote = tf.matmul(
-      tf.tile(inputs_pose_expansion, [1, 1, 1, 1, num_classes, 1, 1]), kernel, name='pose_view_transform_vote'
-    )
-    vote_shape = vote.get_shape().as_list()
-    # vote: reshape into [N, H, W, I, O, PH x PW]
-    vote = tf.reshape(
-      vote, vote_shape[:-2] + [vote_shape[-2] * vote_shape[-1]]
+      name='pose_view_transform_weights', shape=[inputs_poses_shape[3], num_classes] + inputs_poses_shape[-2:]
     )
 
-    # add scaled coordinate
-    H = inputs_pose_shape[1]
-    W = inputs_pose_shape[2]
+    # inputs_pose_expansion: [N, H, W, I, 1, PH, PW]
+    # inputs_pose_expansion: expand inputs_pose dimension to match with kernel for broadcasting,
+    # share the transformation matrices between different positions of the same capsule type,
+    # share the transformation matrices as kernel (1, 1) broadcasting to inputs pose expansion (H, W)
+    inputs_poses_expansion = inputs_poses[..., tf.newaxis, :, :]
+
+    # votes: [N, H, W, I, O, PH, PW]
+    votes = _matmul_broadcast(
+      inputs_poses_expansion, kernel, name='votes'
+    )
+    votes_shape = votes.get_shape().as_list()
+    # votes: reshape into [N, H, W, I, O, PH x PW]
+    votes = tf.reshape(
+      votes, votes_shape[:-2] + [votes_shape[-2] * votes_shape[-1]]
+    )
+
+    # add scaled coordinate (row, column) of the center of the receptive field of each capsule
+    # to the first two elements of its vote
+    H = inputs_poses_shape[1]
+    W = inputs_poses_shape[2]
 
     coordinate_offset_hh = tf.reshape(
       (tf.range(H, dtype=tf.float32) + 0.50) / H, [1, H, 1, 1, 1]
@@ -616,30 +458,252 @@ def capsule_fc(inputs, num_classes, inverse_temperature, iterations, name):
       [coordinate_offset_w0, coordinate_offset_ww] + [coordinate_offset_w0 for _ in xrange(14)], axis=-1
     )
 
-    vote = vote + coordinate_offset_h + coordinate_offset_w
+    votes = votes + coordinate_offset_h + coordinate_offset_w
 
-    # vote: reshape into [N, H x W x I, O, PH x PW]
-    vote = tf.reshape(
-      vote, [vote_shape[0], vote_shape[1] * vote_shape[2] * vote_shape[3], vote_shape[4], vote_shape[5] * vote_shape[6]]
-    )
-
-    # inputs_activation: [N, H, W, I]
-    # inputs_activation: reshape into [N, KH x KW x I]
-    inputs_activation = tf.reshape(
-      inputs_activation, [inputs_activation_shape[0], inputs_activation_shape[1] * inputs_activation_shape[2] * inputs_activation_shape[3]]
-    )
-    # vote, inputs_activaiton_unit -> EM -> output_pose_unit, output_activation_unit
-    # pose: [N, O, PH x PW]
-    # activation: [N, O]
-    pose, activation = matrix_capsule_em_routing(
-      vote, inputs_activation, beta_v, beta_a, inverse_temperature, iterations, name=name + '_em_'
-    )
-    # pose: reshape to [N, O, PH, PW]
-    pose = tf.reshape(
-      pose, [vote_shape[0]] + vote_shape[4:]
+    # votes: reshape into [N, H x W x I, O, PH x PW]
+    votes = tf.reshape(
+      votes, [
+        votes_shape[0],
+        votes_shape[1] * votes_shape[2] * votes_shape[3],
+        votes_shape[4],  votes_shape[5] * votes_shape[6]
+      ]
     )
 
-  return pose, activation
+    # inputs_activations: [N, H, W, I]
+    # inputs_activations: reshape into [N, H x W x I]
+    i_activations = tf.reshape(
+      inputs_activations, [
+        inputs_activations_shape[0],
+        inputs_activations_shape[1] * inputs_activations_shape[2] * inputs_activations_shape[3]
+      ]
+    )
+
+    # beta_v and beta_a one for each output capsule: [N, O]
+    beta_v = _get_weights_wrapper(
+      name='beta_v', shape=[
+        inputs_poses_shape[0], num_classes
+      ]
+    )
+    beta_a = _get_weights_wrapper(
+      name='beta_a', shape=[
+        inputs_poses_shape[0], num_classes
+      ]
+    )
+
+    # output poses and activations via matrix capsules_em_routing algorithm
+    # poses: [N, O, PH x PW], activations: [N, O]
+    poses, activations = matrix_capsules_em_routing(
+      votes, i_activations, beta_v, beta_a, inverse_temperature, iterations, name='em_routing'
+    )
+
+    # pose: [N, O, PH, PW]
+    poses = tf.reshape(
+      poses, [
+        votes_shape[0], votes_shape[4], votes_shape[5], votes_shape[6]
+      ]
+    )
+
+  return poses, activations
+
+
+def matrix_capsules_em_routing(votes, i_activations, beta_v, beta_a, inverse_temperature, iterations, name):
+  """The EM routing between input capsules (i) and output capsules (o).
+
+  :param votes: [N, OH, OW, KH x KW x I, O, PH x PW] from capsule_conv(),
+    or [N, KH x KW x I, O, PH x PW] from capsule_fc()
+  :param i_activation: [N, OH, OW, KH x KW x I, O] from capsule_conv(),
+    or [N, KH x KW x I, O] from capsule_fc()
+  :param beta_v: [N, OH, OW, O] from capsule_conv(),
+    or [N, O] from capsule_fc()
+  :param beta_a: [N, OH, OW, O] from capsule_conv(),
+    or [N, O] from capsule_fc()
+  :param inverse_temperature: [] from capsule_conv(),
+    or [] from capsule_fc()
+  :param iterations: number of iterations in EM routing, often 3.
+  :param name: name.
+
+  :return: (pose, activation) of output capsules.
+
+  note: the comment assumes arguments from capsule_conv(), remove OH, OW if from capsule_fc(),
+    the function make sure is applicable to both cases by using negative index in argument axis.
+  """
+
+  # votes: [N, OH, OW, KH x KW x I, O, PH x PW]
+  votes_shape = votes.get_shape().as_list()
+  # i_activations: [N, OH, OW, KH x KW x I]
+  i_activations_shape = i_activations.get_shape().as_list()
+
+  with tf.variable_scope(name) as scope:
+
+    # note: match rr shape, i_activations shape with votes shape for broadcasting in EM routing
+
+    # rr: [N, OH, OW, KH x KW x I, O, 1],
+    # rr: routing matrix from each input capsule (i) to each output capsule (o)
+    rr = tf.constant(
+      1.0/votes_shape[-2], shape=votes_shape[:-1] + [1], dtype=tf.float32
+    )
+    rr = tf.Print(
+      rr, [rr.shape, rr[0, ..., :, :, :]], 'rr', summarize=20
+    )
+
+    # i_activations: expand_dims to [N, OH, OW, KH x KW x I, 1, 1]
+    i_activations = i_activations[..., tf.newaxis, tf.newaxis]
+    i_activations = tf.Print(
+      i_activations, [i_activations.shape, i_activations[0, ..., :, :, :]], 'i_activations', summarize=20
+    )
+
+    # beta_v and beta_a: expand_dims to [N, OH, OW, 1, O, 1]
+    beta_v = beta_v[..., tf.newaxis, :, tf.newaxis]
+    beta_a = beta_a[..., tf.newaxis, :, tf.newaxis]
+
+
+    def m_step(rr, votes, i_activations, beta_v, beta_a, inverse_temperature):
+      """The M-Step in EM Routing.
+
+      :param rr: [N, OH, OW, KH x KW x I, O, 1],
+        routing assignments from each input capsules (i) to each output capsules (o).
+      :param votes: [N, OH, OW, KH x KW x I, O, PH x PW],
+        input capsules poses x view transformation.
+      :param i_activations: [N, OH, OW, KH x KW x I, 1, 1],
+        input capsules activations, with dimensions expanded to match votes for broadcasting.
+      :param beta_v: cost of describing capsules with one variance in each h-th compenents,
+        should be learned discriminatively.
+      :param beta_a: cost of describing capsules with one mean in across all h-th compenents,
+        should be learned discriminatively.
+      :param inverse_temperature: lambda, increase over steps with respect to a fixed schedule.
+
+      :return: (o_mean, o_stdv, o_activation)
+      """
+
+      # votes: [N, OH, OW, KH x KW x I, O, PH x PW]
+      votes_shape = votes.get_shape().as_list()
+      votes = tf.Print(
+        votes, [votes.shape, votes[0, ..., :, 0, :]], 'mstep: votes', summarize=20
+      )
+
+      # rr_prime: [N, OH, OW, KH x KW x I, O, 1]
+      rr_prime = rr * i_activations
+      rr_prime = tf.Print(
+        rr_prime, [rr_prime.shape, rr_prime[0, ..., :, 0, :]], 'mstep: rr_prime', summarize=20
+      )
+
+      # rr_prime_sum: sum acorss i, [N, OH, OW, 1, O, 1]
+      rr_prime_sum = tf.reduce_sum(
+        rr_prime, axis=-3, keep_dims=True, name='rr_prime_sum'
+      )
+      rr_prime_sum = tf.Print(
+        rr_prime_sum, [rr_prime_sum.shape, rr_prime_sum[0, ..., :, 0, :]], 'mstep: rr_prime_sum', summarize=20
+      )
+
+      # o_mean: [N, OH, OW, 1, O, PH x PW]
+      o_mean = tf.reduce_sum(
+        rr_prime * votes, axis=-3, keep_dims=True
+      ) / rr_prime_sum
+      o_mean = tf.Print(
+        o_mean, [o_mean.shape, o_mean[0, ..., :, 0, :]], 'mstep: o_mean', summarize=20
+      )
+
+      # o_stdv: [N, OH, OW, 1, O, PH x PW]
+      o_stdv = tf.sqrt(
+        tf.reduce_sum(
+          rr_prime * tf.square(votes - o_mean), axis=-3, keep_dims=True
+        ) / rr_prime_sum
+      )
+      o_stdv = tf.Print(
+        o_stdv, [o_stdv.shape, o_stdv[0, ..., :, 0, :]], 'mstep: o_stdv', summarize=20
+      )
+
+      # o_cost: [N, OH, OW, 1, O, PH x PW]
+      o_cost = (beta_v + tf.log(o_stdv + epsilon)) * rr_prime_sum
+      o_cost = tf.Print(
+        o_cost, [beta_v, o_cost.shape, o_cost[0, ..., :, 0, :]], 'mstep: beta_v, o_cost', summarize=20
+      )
+
+      # o_activation: [N, OH, OW, 1, O, 1]
+      o_activations_cost = (beta_a - tf.reduce_sum(o_cost, axis=-1, keep_dims=True))
+      # try to find a good inverse_temperature, for o_activation,
+      o_activations_cost = tf.Print(
+        o_activations_cost, [
+          beta_a, inverse_temperature, o_activations_cost.shape, o_activations_cost[0, ..., :, 0, :]
+        ], 'mstep: beta_a, inverse_temperature, o_activation_cost', summarize=20
+      )
+      o_activations = tf.sigmoid(
+        inverse_temperature * o_activations_cost
+      )
+      o_activations = tf.Print(
+        o_activations, [o_activations.shape, o_activations[0, ..., :, 0, :]], 'mstep: o_activation', summarize=20
+      )
+
+      return o_mean, o_stdv, o_activations
+
+    def e_step(o_mean, o_stdv, o_activations, votes):
+      """The E-Step in EM Routing.
+
+      :param o_mean: [N, OH, OW, 1, O, PH x PW]
+      :param o_stdv: [N, OH, OW, 1, O, PH x PW]
+      :param o_activations: [N, OH, OW, 1, O, 1]
+      :param votes: [N, OH, OW, KH x KW x I, O, PH x PW]
+
+      :return: rr
+      """
+
+      # votes: [N, OH, OW, KH x KW x I, O, PH x PW]
+      votes_shape = votes.get_shape().as_list()
+      votes = tf.Print(
+        votes, [votes.shape, votes[0, ..., :, 0, :]], 'estep: votes', summarize=20
+      )
+
+      # o_p: [N, OH, OW, KH x KW x I, O, 1]
+      # o_p is the probability density of the h-th component of the vote from i to c
+      o_p_unit0 = - tf.reduce_sum(
+        tf.square(votes - o_mean) / (2 * tf.square(o_stdv)), axis=-1, keep_dims=True
+      )
+      o_p_unit0 = tf.Print(
+        o_p_unit0, [o_p_unit0.shape, o_p_unit0[0, ..., :, 0, :]], 'estep: o_p_unit0', summarize=20
+      )
+      # o_p_unit1 = - tf.log(
+      #   0.50 * votes_shape[-1] * tf.log(2 * pi) + epsilon
+      # )
+      # o_p_unit1 = tf.Print(
+      #   o_p_unit1, [o_p_unit1.shape, o_p_unit1[0, ..., :, 0, :]], 'estep: o_p_unit1', summarize=20
+      # )
+      o_p_unit2 = - tf.reduce_sum(
+        tf.log(o_stdv + epsilon), axis=-1, keep_dims=True
+      )
+      o_p_unit2 = tf.Print(
+        o_p_unit2, [o_p_unit2.shape, o_p_unit2[0, ..., :, 0, :]], 'estep: o_p_unit2', summarize=20
+      )
+      # o_p
+      o_p = o_p_unit0 + o_p_unit2
+      o_p = tf.Print(
+        o_p, [o_p.shape, o_p[0, ..., :, 0, :]], 'estep: o_p', summarize=20
+      )
+      # rr: [N, OH, OW, KH x KW x I, O, 1]
+      rr = tf.nn.softmax(
+        tf.log(o_activations + epsilon) + o_p, dim=-2
+      )
+      rr = tf.Print(
+        rr, [rr.shape, rr[0, ..., :, 0, :]], 'estep: rr', summarize=20
+      )
+
+      return rr
+
+    for t in xrange(iterations):
+      o_mean, o_stdv, o_activations = m_step(
+        rr, votes, i_activations, beta_v, beta_a, inverse_temperature
+      )
+      if t < iterations - 1:
+        rr = e_step(
+          o_mean, o_stdv, o_activations, votes
+        )
+
+    # pose: [N, OH, OW, O, PH x PW] via squeeze o_mean [N, OH, OW, 1, O, PH x PW]
+    poses = tf.squeeze(o_mean, axis=-3)
+
+    # activation: [N, OH, OW, O] via squeeze o_activationis [N, OH, OW, 1, O, 1]
+    activations = tf.squeeze(o_activations, axis=[-3, -1])
+
+  return poses, activations
 
 # ------------------------------------------------------------------------------#
 # -------------------------------- capsules net --------------------------------#
@@ -653,26 +717,26 @@ def capsule_net(inputs, num_classes, inverse_temperature, iterations, name='Caps
     nets = _conv2d_wrapper(
       inputs, shape=[5, 5, 1, 32], strides=[1, 2, 2, 1], padding='SAME', add_bias=True, activation_fn=tf.nn.relu, name='conv1'
     )
-    # inputs [N, H, W, C] -> conv2d, 1x1, strides 1, channels 32 x (4x4+1) -> pose, activation
+    # inputs [N, H, W, C] -> conv2d, 1x1, strides 1, channels 32x(4x4+1) -> (poses, activations)
     nets = capsule_init(
       nets, shape=[1, 1, 32, 32], strides=[1, 1, 1, 1], padding='VALID', pose_shape=[4, 4], name='capsule_init'
     )
-    # inputs: (pose, activation) -> capsule-conv 3x3x32x32x4x4 -> (pose, activation)
+    # inputs: (poses, activations) -> capsule-conv 3x3x32x32x4x4, strides 2 -> (poses, activations)
     nets = capsule_conv(
       nets, shape=[3, 3, 32, 32], strides=[1, 2, 2, 1], inverse_temperature=inverse_temperature, iterations=iterations, name='capsule_conv1'
     )
-    # inputs: (pose, activation) -> capsule-conv 3x3x32x32x4x4 -> (pose, activation)
+    # inputs: (poses, activations) -> capsule-conv 3x3x32x32x4x4, strides 1 -> (poses, activations)
     nets = capsule_conv(
       nets, shape=[3, 3, 32, 32], strides=[1, 1, 1, 1], inverse_temperature=inverse_temperature, iterations=iterations, name='capsule_conv2'
     )
-    # inputs: (pose, activation) -> capsule-fc HxW share weight between 1x1 -> (pose, activation)
+    # inputs: (poses, activations) -> capsule-fc 1x1x32x10x4x4 shared view transform matrix within each channel -> (poses, activations)
     nets = capsule_fc(
       nets, num_classes, inverse_temperature=inverse_temperature, iterations=iterations, name='capsule_fc'
     )
 
-    pose, activation = nets
+    poses, activations = nets
 
-  return pose, activation
+  return poses, activations
 
 # ------------------------------------------------------------------------------#
 # ------------------------------------ loss ------------------------------------#

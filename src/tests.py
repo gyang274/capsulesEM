@@ -1,62 +1,24 @@
-"""A train script for matrix capsule with EM routing."""
+"""A tests script for matrix capsule with EM routing."""
 
-# TODO: re-write use generic sess/train, without slim.
-
-
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
-import tensorflow as tf
-
-from datasets import mnist
-from capsule import capsule
-
-
-FLAGS = tf.app.flags.FLAGS
-
-tf.app.flags.DEFINE_integer(
-  'batch_size', 128, 'Tests Batch Size.'
-)
-tf.app.flags.DEFINE_string(
-  'data_dir', 'data/mnist', 'Data Directory'
-)
-tf.app.flags.DEFINE_string(
-  'train_dir', 'log/train', 'Train Directory.'
-)
-tf.app.flags.DEFINE_string(
-  'tests_dir', 'log/tests', 'Tests Directory.'
-)
-
-tf.app.flags.DEFINE_string(
-  'checkpoint_path', FLAGS.train_dir,
-  'The directory where the model was written to or an absolute path to a '
-  'checkpoint file.'
-)
-
-NUM_STEPS_PER_EPOCH = int(
-  mnist.NUM_TRAIN_EXAMPLES / FLAGS.batch_size
-)
-
-slim = tf.contrib.slim
-
+from settings import *
 
 
 def main(_):
 
   tf.logging.set_verbosity(tf.logging.INFO)
 
-  with tf.Graph().as_default():
+  with tf.Graph().as_default(), tf.device('/cpu:0'):
 
     global_step = slim.get_or_create_global_step()
-    global_step = tf.Print(global_step, [global_step], 'global_step')
+    global_step = tf.Print(
+      global_step, [global_step], 'global_step'
+    )
 
-    with tf.device('/cpu:0'):
-      images, labels = mnist.inputs(
-        data_directory=FLAGS.data_dir,
-        is_training=False,
-        batch_size=FLAGS.batch_size
-      )
+    images, labels = mnist.inputs(
+      data_directory=FLAGS.data_dir,
+      is_training=False,
+      batch_size=FLAGS.batch_size
+    )
 
     inverse_temperature = tf.train.piecewise_constant(
       tf.cast(global_step, dtype=tf.int32),
@@ -68,6 +30,7 @@ def main(_):
       ],
       values=[0.001, 0.002, 0.005, 0.010, 0.020]
     )
+
     # margin = tf.train.piecewise_constant(
     #   tf.cast(global_step, dtype=tf.int32),
     #   boundaries=[
@@ -93,11 +56,13 @@ def main(_):
     labels = tf.argmax(labels, 1)
 
     # Define the metrics:
-    names_to_values, names_to_updates = slim.metrics.aggregate_metric_map({
+    names_to_values, names_to_updates = slim.metrics.aggregate_metric_map(
+      {
         'Accuracy': slim.metrics.streaming_accuracy(
           predictions, labels
         )
-    })
+      }
+    )
 
     # Print the summaries to screen.
     for name, value in names_to_values.items():
@@ -169,7 +134,7 @@ def main(_):
         allow_soft_placement=True,
         log_device_placement=False
       )
-  )
+    )
 
 if __name__ == '__main__':
   tf.app.run()

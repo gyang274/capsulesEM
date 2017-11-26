@@ -1,0 +1,7 @@
+*.pyc
+
+*.akv
+
+/doc/node_modules
+
+/src/data
