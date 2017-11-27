@@ -233,7 +233,124 @@
 <p> This EM routing algorithm is more physically and statistically solid than the routing by agreement (agreement on cosine angle) introduced in the vector capsules.   </p>
 </li>
 </ol>
-<p>Let&apos;s take a look on the framework itself.</p>
+<p>Let&apos;s define some notations before diving into the matrix capsules framework.</p>
+<h3 id="the-notations">The Notations</h3>
+<ol>
+<li><p><strong>A Regular Layer</strong>: Tensor with shape <strong>[N, H, W, C]</strong>, where often N is the number of samples e.g., batch_size, H is the height, W is the width, and C is the number of channels. For example, in MNIST, each image is 28x28, with a single channel, so a batch size of 128 images would lead to an input tensor of [128, 28, 28, 1].</p>
+</li>
+<li><p><strong>A Regular Kernel</strong>: Tensor with shape <strong>[KH, KW, I, O]</strong>, where often KH is the kernel height, KW is the kernel width, I is the number of input channels, and O is the number of output channels, e.g., a 5x5 convolution kernel on the previous [128, 28, 28, 1] to provide 32 ouptut channels would require a kernel shape [5, 5, 1, 32]. Of course, we also need strides to determine the height and width of the output layer.</p>
+</li>
+<li><p><strong>A Matrix Capsule Layer</strong>: Tensor tuple of <strong>(poses: [N, H, W, C, PH, PW], activations: [N, H, W, C])</strong>, where PH is the pose height, and PW is the pose width. This is an extension from the regular layers to include poses and activations in representing a feature or an object. In the paper, matrix capsules with EM routing, PH = PW = 4.</p>
+</li>
+<li><p><strong>A Matrix Capsule Kernel</strong>: Tensor with shape <strong>[KH, KW, I, O, PH, PW]</strong>. This kernel is used in <strong>the matrix capsules convolution operation</strong> to convert an inputs matrix capsule layer <strong>(poses: [N, H, W, I, PH, PW], activations: [N, H, W, I])</strong> into and output matrix capsule layer <strong>(poses: [N, OH, OW, O, PH, PW], activations: [N, OH, OW, O])</strong>. Here, OH is the output height, OW is the output width, and OH and OW are determined by the KH, KW and strides.</p>
+</li>
+</ol>
+<p>Let&apos;s build a neural network with matrix capsules.</p>
+<h3 id="the-framework">The Framework</h3>
+<p><img src="fig/capsulesEM-Figure1.png" alt="Figure 1"></p>
+<p>For clarity, let&apos;s name each layer as IL (input layer), AL, BL, CL, DL, and EL, from left to right. In the paper, the author uses A, B, C, D, E to represent the number of channels at each layer in above figure. I add a postfix <strong>L</strong> to distinguish between the name of layer from the number of channels of that layer.</p>
+<p>In addition, I assume we use the MNIST dataset with a batch<em>size <strong>N=128</strong>, set <strong>A=32</strong>, <strong>B=48</strong>, <strong>C=64</strong>, <strong>D=80</strong>, and <em>_E=10</em></em>, so that we can distinguish between each layers.</p>
+<h4 id="an-overview-of-the-framework">An overview of the framework</h4>
+<ol>
+<li><p>Layer IL: MNIST, a batch_size 128, [128, 28, 28, 1].</p>
+</li>
+<li><p>IL -&gt; AL (A=32): kernel [5, 5, 1, 32], strides [1, 2, 2, 1], padding SAME, ReLU. This is a regular convoluation operation connects IL to AL.</p>
+</li>
+<li><p>Layer AL: [128, 12, 12, 32].</p>
+</li>
+<li><p>AL -&gt; BL (B=48): kernel [1, 1, 32, 48] x (4 x 4 + 1), strides [1, 1, 1, 1]. 16 such kernels of [1, 1, 32, 48] for building poses, and 1 such kernel [1, 1, 32, 48] for building activation. This is the <strong>initialization operation to connect a regular layer to a matrix capsule layer</strong>, implemented in <strong>capsule_init()</strong> with details in next section.</p>
+</li>
+<li><p>Layer BL: poses [N=128, H=12, W=12, B=48, PH=4, PW=4], activations [N=128, H=12, W=12, B=48].</p>
+</li>
+<li><p>BL -&gt; CL (C=64): kernel [KH=3, KW=3, B=48, C=64, PH=4, PW=4], e.g., KH = KW = 3. strides, [1, 2, 2, 1]. This is the <strong>convolution operation between matrix capsule layer</strong>, implemented in <strong>capsule_conv()</strong> with details in next section.</p>
+</li>
+<li><p>Layer CL: poses [N=128, H=5, W=5, C=64, PH=4, PW=4], activation [N=128, H=5, W=5, C=64]</p>
+</li>
+<li><p>CL -&gt; DL (D=80): kernel [3, 3, 64, 80, 4, 4], strides [1, 1, 1, 1].</p>
+</li>
+<li><p>Layer DL: posed [128, 3, 3, 80, 4, 4], activations [128, 3, 3, 80]</p>
+</li>
+<li><p>DL -&gt; EL (E=10), kernel [80, 10, 4, 4]. This is the <strong>fully-connected operation with shared view transformation weight matrix between matrix capsule laye</strong>, implemented in <strong>capsule_fc()</strong> with details in next section.</p>
+</li>
+<li><p>Layer EL: poses [128, 10, 4, 4], activations [128, 10].</p>
+</li>
+</ol>
+<h4 id="the-initialization-operation-to-connect-a-regular-layer-to-a-matrix-capsule-layer">The initialization operation to connect a regular layer to a matrix capsule layer</h4>
+<p>This operation builds a matrix capsules layer from a regular convolution layer.</p>
+<p>Let&apos;s assume we have a regular layer of shape [N, IH, IW, I], where IH is the inputs height, IW is the inputs width, and I is the number of inputs channels, and we want to build a matrix capsules layer with kernel [KH, KW, I, O], and strides [1, SH, SW, 1]. Then, we will have a output of a matrix capsules layer of shape (poses [N, OH, OW, O, PH, PW], activations [N, OH, OW, O]), where OH is the output height, OW is the output width, O is the number of output channels, PH is the pose height, and PW is the pose width. Here, OH and OW is determined by the kernel and strides, e.g., KH, KW, SH, SW.</p>
+<p>In particular, we can do the regular convolution with PH x PW different kernels of shape [KH, KW, I, O], each produces an output [N, OH, OW, O], we can then stack the PH x PW outputs into [N, OH, OW, O, PH, PW]. This produces the poses. For simplicity, it is equivalent to do a regular convolution with kernel of shape [KH, KW, I, O x PH x PW], obtain an output of shape [N, OH, OW, O x PH x PW], and reshape the output to poses [N, OH, OW, O, PH, PW].</p>
+<p>The activation is obtained use same kernel [KH, KW, I, O] and strides [1, SH, SW, 1], no bias added, and tf.sigmoid as activation function.</p>
+<p>In the network above, AL -&gt; BL: kernel [1, 1, 32, 48], strides [1, 1, 1, 1], pose shape [4, 4]. Therefore, we apply a regular convolution with kernel [1, 1, 32, 48 x 4 x 4], strides [1, 1, 1, 1] on AL to obtain poses [128, 12, 12, 48, 4, 4], and then apply another regular convolution with kernel [1, 1, 32, 48], strides [1, 1, 1, 1] on AL to obtain activations [128, 12, 12, 48].</p>
+<h4 id="the-convolution-operation-between-matrix-capsule-layer">The convolution operation between matrix capsule layer</h4>
+<p>This operation builds a matrix capsules layer from another matrix capsules layer. This is the operation provides the capability of building deep neural network with capsule layers.</p>
+<p>Let&apos;s assume we have a matrix capsules layer of shape (poses [N, IH, IW, I, PH, PW], activations [N, IH, IW, I]), and we want to build a matrix capsules layer with kernel [KH, KW, I, O], and strides [1, SH, SW, 1]. Then, we will have a output of a matrix capsules layer of shape (poses [N, OH, OW, O, PH, PW], activations [N, OH, OW, O]). Here, OH and OW is determined by the kernel and strides, e.g., KH, KW, SH, SW.</p>
+<p>In particular, the kernel is in fact in shape [KH, KW, I, O, PH, PW]. At each required position, say (h=0, w=0) of the inputs poses, slice a piece of [N, 0:KH, 0:KW, I, PH, PW], make a dimension expansion to [N, KH, KW, I, 1, PH, PW], <strong>matrix multiplication with the kernel</strong> as view transform matrix to obtain [N, KH, KW, I, O, PH, PW]. This creates one <strong>votes matrix from KH x KW x I inputs capsules to O outputs with PH x PW dimensions</strong>. In corresponding, the inputs activations for this votes matrix is the slice of [N, 0:KH, 0:KW, I] from the inputs activations. This vote and activation will go into the EM routing algorithm, discussed in next section, and produce an output of pose [N, O, PH, PW] and activation [N, O]. This is the output pose and activation at position (h=0, w=0). The convolution should slide through all required positions deteremined by kernel and strides, and produce output (poses [N, OH, OW, O, PH, PW], activations [N, OH, OW, O]). Here, assume padding is VALID.</p>
+<p>In the network above, BL -&gt; CL: kernel [3, 3, 48, 64], strides, [1, 2, 2, 1]. The above step would create an vote matrix [128, 3, 3, 48, 64, 4, 4] and activations [128, 3, 3, 48]. This vote and activation will go into the EM routing algorithm, discussed in next section, and produce an output of pose [128, 64, 4, 4] and activation [128, 64]. This is the output pose and activation at position (h=0, w=0). The convolution should slide through all required positions deteremined by kernel and strides, and produce output (poses [128, 5, 5, 64, 4, 4], activations [128, 5, 5, 64]). </p>
+<h4 id="the-fully-connected-operation-with-shared-view-transformation-weight-matrix-between-matrix-capsule-layer">The fully-connected operation with shared view transformation weight matrix between matrix capsule layer</h4>
+<p>This operation builds an output matrix capsules layer from another matrix capsules layer. This operation is better to describe as a fully-connected operation with shared view transformation weight matrix.</p>
+<p>In particular, in comparison to the convolution operation above, we should consider the kernel size as the whole inputs H, W. In the convolution operation, the view transformation matrix is different for each capsule in the kernel, which requires a kernel of shape [N, IH, IW, I, O, PH, PW]. However, in this operation, the view transform matrix is shared across capsule in the same channel, so it instead requires a kernel of shape [N, 1, 1, I, O, PH, PW].</p>
+<p><strong>Remark</strong>: This shared view transform matrix is the reason the author use a blue area 1 x 1 in connecting DL to EL in the figure. However, the blue area 1 x 1 is confusing because it would produce a EL of (poses: [128, 3, 3, 10, 4, 4], activations [128, 3, 3, 10]) from DL of poses: [128, 3, 3, 80, 4, 4], activations [128, 3, 3, 80]), by following the same analysis of BL -&gt; CL, and CL -&gt; DL. Here, instead, the blue area should really be H x W, instead 1 x 1, with a special requirement that the view transform matrix is the same across capsules within each channel.</p>
+<p>Therefore, make a dimesion expansion on inputs poses to [N, IH, IW, I, 1, PH, PW], do matrix muliplication of inputs poses to [N, IH, IW, I, 1, PH, PW] with kernel [N, 1, 1, I, O, PH, PW] produce votes matrix [N, IH, IW, I, O, PH, PW]. This vote and activation will go into the EM routing algorithm, discussed in next section, and produce an output of pose [N, O, PH, PW] and activation [N, O]. </p>
+<p><strong>Remark</strong>: Add scaled coordinate to the first two elements of votes.</p>
+<h4 id="a-comparison-between-convolution-operation-capsuleconv-and-fully-connected-with-shared-view-transformation-matrix-capsulefc-between-capsules-layer">A comparison between convolution operation (capsule_conv) and fully-connected with shared view transformation matrix (capsule_fc) between capsules layer.</h4>
+<ol>
+<li><p>Kernel: </p>
+<ul>
+<li><p>capsule_conv kernel [K, K, I, O, PH, PW]</p>
+</li>
+<li><p>capsule_fc kernel [1, 1, I, O, PH, PW]</p>
+</li>
+</ul>
+</li>
+<li><p>EM Algorithm: </p>
+<ul>
+<li><p>capsule_conv: votes [N, KH, KW, I, O, PH, PW], activations [N, KH, KW, I, O] </p>
+</li>
+<li><p>capsule_fc: votes [N, IH, IW, I, O, PH, PW], activations [N, IH, IW, I, O]</p>
+</li>
+</ul>
+</li>
+</ol>
+<h4 id="the-em-routing-algorithm">The EM Routing Algorithm</h4>
+<p>Let&apos;s assume the inputs are votes [..., KH, KW, I, O, PH, PW] and activations [..., KH, KW, I].</p>
+<p>First, reshape VOTES [..., KH x KW x I, O, PH x PW] and ACTIVATIONS [..., KH x KW x I, 1, 1]. Here, KH x KW x I is the number of inputs capsules, O is the number of output capsules, and PH x PW is the number of pose dimensions.</p>
+<p>In the network above, BL -&gt; CL, KH = KW = 3, B = 48 (inputs I), C = 64 (output O), PH = PW = 4, then KH x KW x B = 3 x 3 x 48 = 288 inputs capules, C = 64 output capsules, and PH x PW = 4 x 4 = 16 pose dimensions. There is a slight overload on the notation I. In most cases, I and O represent the inputs and output of the two consecutive layers, and only in the very begining I represents the inputs layer literally.</p>
+<p>As a result, the EM routing algorithm can be described as:</p>
+<ol>
+<li><p>Initialize RR [..., KH x KW x I, O, 1], constant <script type="math/tex; ">1/O</script>. This is the routing assigment from each inputs capsule to each output capsule, initialized with a value saying that each inputs routing equally to each output. The sum of each inputs capsules routing assignment to all output capsule is 1.</p>
+</li>
+<li><p>M-Step:</p>
+<ol>
+<li><p>RR&apos; = RR [..., KH x KW x I, O, 1] x ACTIVATIONS [..., KH x KW x I, 1, 1]. Here, RR&apos; [..., KH x KW x I, O, 1] is the activation weighted routing assignment.</p>
+</li>
+<li><p>RR&apos;_SUM = reduce_sum(RR&apos;, axis=-3). Here, RR&apos;_SUM [..., 1, O, 1].</p>
+</li>
+<li><p>O_MEAN = reduce_sum(RR&apos; x VOTES, axis=-3) / RR&apos;_SUM. Here, O_MEAN [..., 1, O, PH x PW], mean value for each output capsule at each dimension.</p>
+</li>
+<li><p>O_STDV = reduce_sum(RR&apos; x (VOTES - O_MEAN)^2, axis=-3) / RR&apos;_SUM. O_STDV [..., 1, O, PH x PW], standard deviation value for each output capsule at each dimension.</p>
+</li>
+<li><p>COST_H = (<script type="math/tex; ">\beta_v</script> + log(O_STDV)) x RR&apos;_SUM. Here, COST_H [..., 1, O, PH x PW] is the cost of describing the capsule using mean, with the loss of standard deviation.</p>
+</li>
+<li><p>O_ACTIVATIONS = sigmoid(<script type="math/tex; ">\lambda</script>(<script type="math/tex; ">\beta_a</script> - reduced_sum(COST_H, axis=-1))). Here, O_ACTIVATIONS [..., 1, O, 1] is the activation of each output capsule.</p>
+</li>
+</ol>
+</li>
+<li><p>E-Step:</p>
+<ol>
+<li><p>PP = - reduce_sum((VOTES - O_MEAN)^2/(2*O_STDV^2), axis=-1) - reduce_sum(log(O_STDV), axis=-1). Here, PP [..., KH x KW x I, O, 1] is the probability of each inputs capsule is an element of each ouptut capsule.  </p>
+</li>
+<li><p>RR = softmax(PP + log(O_ACTIVATIONS)). Here, RR [..., KH x KW x I, O, 1] is the updated routing assignment matrix from each inputs capsule to each output capsule.</p>
+</li>
+</ol>
+</li>
+</ol>
+<p><strong>Remark</strong>:</p>
+<ol>
+<li><p>The <strong>reduce_sum requires keep_dims=True</strong>.</p>
+</li>
+<li><p>The E-step is derived from the formula given in the paper with optimizing for computation. This optimization is further discussed in later section.  </p>
+</li>
+</ol>
 
                                 
                                 </section>
@@ -277,7 +394,7 @@
     <script>
         var gitbook = gitbook || [];
         gitbook.push(function() {
-            gitbook.page.hasChanged({"page":{"title":"An Understanding","level":"2.1","depth":1,"next":{"title":"An Implementation","level":"2.2","depth":1,"path":"0x01.main.md","ref":"0x01.main.md","articles":[]},"previous":{"title":"Quick Start","level":"1.1","depth":1,"path":"README.md","ref":"README.md","articles":[]},"dir":"ltr"},"config":{"plugins":["mathjax","livereload"],"root":"./src","styles":{"website":"css/website.css"},"pluginsConfig":{"mathjax":{"forceSVG":false,"version":"2.6-latest"},"livereload":{},"highlight":{},"search":{},"lunr":{"maxIndexSize":1000000,"ignoreSpecialCharacters":false},"sharing":{"facebook":true,"twitter":true,"google":false,"weibo":false,"instapaper":false,"vk":false,"all":["facebook","google","twitter","weibo","instapaper"]},"fontsettings":{"theme":"white","family":"sans","size":2},"theme-default":{"styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"},"showLevel":false}},"theme":"default","author":"Guang Yang","pdf":{"pageNumbers":true,"fontSize":12,"fontFamily":"Arial","paperSize":"a4","chapterMark":"pagebreak","pageBreaksBefore":"/","margin":{"right":62,"left":62,"top":56,"bottom":56}},"structure":{"langs":"LANGS.md","readme":"README.md","glossary":"GLOSSARY.md","summary":"SUMMARY.md"},"variables":{},"links":{"sidebar":{"Matrix Capsules with EM Routing":"https://gyang274.github.io/capsulesEM/"}},"gitbook":"*"},"file":{"path":"0x00.init.md","mtime":"2017-11-24T20:30:54.142Z","type":"markdown"},"gitbook":{"version":"3.2.3","time":"2017-11-26T04:37:50.917Z"},"basePath":".","book":{"language":""}});
+            gitbook.page.hasChanged({"page":{"title":"An Understanding","level":"2.1","depth":1,"next":{"title":"An Implementation","level":"2.2","depth":1,"path":"0x01.main.md","ref":"0x01.main.md","articles":[]},"previous":{"title":"Quick Start","level":"1.1","depth":1,"path":"README.md","ref":"README.md","articles":[]},"dir":"ltr"},"config":{"plugins":["mathjax"],"root":"./src","styles":{"website":"css/website.css"},"pluginsConfig":{"mathjax":{"forceSVG":false,"version":"2.6-latest"},"highlight":{},"search":{},"lunr":{"maxIndexSize":1000000,"ignoreSpecialCharacters":false},"sharing":{"facebook":true,"twitter":true,"google":false,"weibo":false,"instapaper":false,"vk":false,"all":["facebook","google","twitter","weibo","instapaper"]},"fontsettings":{"theme":"white","family":"sans","size":2},"theme-default":{"styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"},"showLevel":false}},"theme":"default","author":"Guang Yang","pdf":{"pageNumbers":true,"fontSize":12,"fontFamily":"Arial","paperSize":"a4","chapterMark":"pagebreak","pageBreaksBefore":"/","margin":{"right":62,"left":62,"top":56,"bottom":56}},"structure":{"langs":"LANGS.md","readme":"README.md","glossary":"GLOSSARY.md","summary":"SUMMARY.md"},"variables":{},"links":{"sidebar":{"Matrix Capsules with EM Routing":"https://gyang274.github.io/capsulesEM/"}},"gitbook":"*"},"file":{"path":"0x00.init.md","mtime":"2017-11-27T05:21:49.363Z","type":"markdown"},"gitbook":{"version":"3.2.3","time":"2017-11-27T05:27:32.494Z"},"basePath":".","book":{"language":""}});
         });
     </script>
 </div>
@@ -292,10 +409,6 @@
     
         
         <script src="gitbook/gitbook-plugin-mathjax/plugin.js"></script>
-        
-    
-        
-        <script src="gitbook/gitbook-plugin-livereload/plugin.js"></script>
         
     
         

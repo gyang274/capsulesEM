@@ -4,4 +4,7 @@
 
 /doc/node_modules
 
+/src/.ipynb_checkpoints
+
 /src/data
+

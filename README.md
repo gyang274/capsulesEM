@@ -5,7 +5,7 @@ A Tensorflow Implementation of Hinton's __[Matrix Capsules with EM Routing](http
 ## Quick Start
 
 ```
-$ git clone https://github.com/gyang274/capsulesEM.git
+$ git clone https://github.com/gyang274/capsulesEM.git && cd capsulesEM
 
 $ cd src
 
