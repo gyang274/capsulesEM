@@ -2,14 +2,18 @@
 
 from settings import *
 
-
 def main(_):
 
   tf.logging.set_verbosity(tf.logging.INFO)
 
-  with tf.Graph().as_default(), tf.device('/cpu:0'):
+  NUM_STEPS_PER_EPOCH = int(
+    mnist.NUM_TRAIN_EXAMPLES / FLAGS.batch_size
+  )
 
-    global_step = tf.train.get_or_create_global_step()
+  with tf.Graph().as_default():
+
+    with tf.device('/cpu:0'):
+      global_step = tf.train.get_or_create_global_step()
 
     images, labels = mnist.inputs(
       data_directory=FLAGS.data_dir,
@@ -25,7 +29,7 @@ def main(_):
         int(NUM_STEPS_PER_EPOCH * 30),
         int(NUM_STEPS_PER_EPOCH * 50),
       ],
-      values=[0.001, 0.002, 0.005, 0.010, 0.020]
+      values=[0.001, 0.001, 0.002, 0.002, 0.005]
     )
 
     margin = tf.train.piecewise_constant(
@@ -38,7 +42,7 @@ def main(_):
       ]
     )
 
-    poses, activations = capsule.capsule_net(
+    poses, activations = capsule.nets.capsule_net(
       images,
       num_classes=10,
       inverse_temperature=inverse_temperature,
@@ -46,7 +50,7 @@ def main(_):
       name='CapsuleEM-V0'
     )
 
-    loss = capsule.spread_loss(
+    loss = capsule.nets.spread_loss(
       labels, activations, margin=margin, name='spread_loss'
     )
 
@@ -57,16 +61,16 @@ def main(_):
     optimizer = tf.train.AdamOptimizer(learning_rate=0.001)
 
     train_tensor = slim.learning.create_train_op(
-      loss, optimizer
+      loss, optimizer, global_step=global_step
     )
 
     slim.learning.train(
       train_tensor,
       logdir=FLAGS.train_dir,
       log_every_n_steps=1,
-      save_summaries_secs=60,
+      save_summaries_secs=240,
       saver=tf.train.Saver(max_to_keep=100),
-      save_interval_secs=20,
+      save_interval_secs=600,
       # yg: add session_config to limit gpu usage and allow growth
       session_config=tf.ConfigProto(
         # device_count = {

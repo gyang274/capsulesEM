@@ -7,12 +7,17 @@ def main(_):
 
   tf.logging.set_verbosity(tf.logging.INFO)
 
-  with tf.Graph().as_default(), tf.device('/cpu:0'):
+  NUM_STEPS_PER_EPOCH = int(
+    mnist.NUM_TRAIN_EXAMPLES / FLAGS.batch_size
+  )
 
-    global_step = slim.get_or_create_global_step()
-    global_step = tf.Print(
-      global_step, [global_step], 'global_step'
-    )
+  with tf.Graph().as_default():
+
+    with tf.device('/cpu:0'):
+      global_step = slim.get_or_create_global_step()
+      global_step = tf.Print(
+        global_step, [global_step], 'global_step'
+      )
 
     images, labels = mnist.inputs(
       data_directory=FLAGS.data_dir,
@@ -28,7 +33,7 @@ def main(_):
         int(NUM_STEPS_PER_EPOCH * 30),
         int(NUM_STEPS_PER_EPOCH * 50),
       ],
-      values=[0.001, 0.002, 0.005, 0.010, 0.020]
+      values=[0.001, 0.001, 0.002, 0.002, 0.005]
     )
 
     # margin = tf.train.piecewise_constant(
@@ -41,7 +46,7 @@ def main(_):
     #   ]
     # )
 
-    poses, activations = capsule.capsule_net(
+    poses, activations = capsule.nets.capsule_net(
       images,
       num_classes=10,
       inverse_temperature=inverse_temperature,

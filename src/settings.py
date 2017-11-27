@@ -6,8 +6,11 @@ from __future__ import print_function
 
 import tensorflow as tf
 
+import capsule.nets
+
 from datasets import mnist
-from capsule import capsule
+
+slim = tf.contrib.slim
 
 
 FLAGS = tf.app.flags.FLAGS
@@ -30,8 +33,3 @@ tf.app.flags.DEFINE_integer(
   'batch_size', 128, 'Train/Tests Batch Size.'
 )
 
-NUM_STEPS_PER_EPOCH = int(
-  mnist.NUM_TRAIN_EXAMPLES / FLAGS.batch_size
-)
-
-slim = tf.contrib.slim
