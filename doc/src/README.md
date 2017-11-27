@@ -3,7 +3,7 @@
 ## Quick Start
 
 ```
-$ git clone https://github.com/gyang274/capsulesEM.git
+$ git clone https://github.com/gyang274/capsulesEM.git && cd capsulesEM
 
 $ cd src
 

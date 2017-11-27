@@ -18,17 +18,15 @@ $ python tests.py
 
 ## TODO
 
-1. Add documentation of understanding, implementation, and optimization.
+1. Run train.py/tests.py on MNIST.
 
-2. Run train.py/tests.py on MNIST.
-
-3. Add train.py/tests.py on smallNORB.
+1. Add train.py/tests.py on smallNORB.
 
 ## Questions
 
-1. $\lambda$ schedule is never mentioned in paper.
+1. $$\lambda$$ schedule is never mentioned in paper.
 
-2. $\beta_a$ and $\beta_v$: should be one global parameter, or one copy each convolutional layer.
+1. The place encode in lower level and rate encode in higher level is not discussed, other than a coordinate addition in last layer.
 
 ## GitHub Page
 
