@@ -81,7 +81,7 @@ def main(_):
           # 'per_process_gpu_memory_fraction': 0.01
         },
         allow_soft_placement=True,
-        log_device_placement=False
+        log_device_placement=True
       )
     )
 
