@@ -99,7 +99,7 @@ In particular,
 
 ## TODO
 
-1. Test `tf.stop_gradient()` in EM?
+1. How `tf.stop_gradient()` in EM? How iteration > 1 cause NaN in loss and capsules_init() activations?
 
 1. Add `learning_rate decay` in `train.py`
 
