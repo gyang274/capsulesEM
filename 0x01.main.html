@@ -257,6 +257,37 @@
 <h3 id="matrix-capsules-nets">Matrix Capsules Nets</h3>
 <p>The network and loss functions are implemented in</p>
 <pre><code>/src/capsule/nets.py
+</code></pre><p>Build a matrix capsules neural network as the same way of building CNN:</p>
+<pre><code>def capsules_net(inputs, num_classes, iterations, name=&apos;CapsuleEM-V0&apos;):
+  &quot;&quot;&quot;Replicate the network in `Matrix Capsules with EM Routing.`
+  &quot;&quot;&quot;
+
+  with tf.variable_scope(name) as scope:
+
+    # inputs [N, H, W, C] -&gt; conv2d, 5x5, strides 2, channels 32 -&gt; nets [N, OH, OW, 32]
+    nets = _conv2d_wrapper(
+      inputs, shape=[5, 5, 1, 32], strides=[1, 2, 2, 1], padding=&apos;SAME&apos;, add_bias=True, activation_fn=tf.nn.relu, name=&apos;conv1&apos;
+    )
+    # inputs [N, H, W, C] -&gt; conv2d, 1x1, strides 1, channels 32x(4x4+1) -&gt; (poses, activations)
+    nets = capsules_init(
+      nets, shape=[1, 1, 32, 32], strides=[1, 1, 1, 1], padding=&apos;VALID&apos;, pose_shape=[4, 4], name=&apos;capsule_init&apos;
+    )
+    # inputs: (poses, activations) -&gt; capsule-conv 3x3x32x32x4x4, strides 2 -&gt; (poses, activations)
+    nets = capsules_conv(
+      nets, shape=[3, 3, 32, 32], strides=[1, 2, 2, 1], iterations=iterations, name=&apos;capsule_conv1&apos;
+    )
+    # inputs: (poses, activations) -&gt; capsule-conv 3x3x32x32x4x4, strides 1 -&gt; (poses, activations)
+    nets = capsules_conv(
+      nets, shape=[3, 3, 32, 32], strides=[1, 1, 1, 1], iterations=iterations, name=&apos;capsule_conv2&apos;
+    )
+    # inputs: (poses, activations) -&gt; capsule-fc 1x1x32x10x4x4 shared view transform matrix within each channel -&gt; (poses, activations)
+    nets = capsules_fc(
+      nets, num_classes, iterations=iterations, name=&apos;capsule_fc&apos;
+    )
+
+    poses, activations = nets
+
+  return poses, activations
 </code></pre><p>Check out the source code for detailed documentation.</p>
 <h3 id="todo">TODO:</h3>
 <ul>
@@ -308,7 +339,7 @@
     <script>
         var gitbook = gitbook || [];
         gitbook.push(function() {
-            gitbook.page.hasChanged({"page":{"title":"An Implementation","level":"2.2","depth":1,"next":{"title":"An Optimization","level":"2.3","depth":1,"path":"0x02.ende.md","ref":"0x02.ende.md","articles":[]},"previous":{"title":"An Understanding","level":"2.1","depth":1,"path":"0x00.init.md","ref":"0x00.init.md","articles":[]},"dir":"ltr"},"config":{"plugins":["mathjax","livereload"],"root":"./src","styles":{"website":"css/website.css"},"pluginsConfig":{"mathjax":{"forceSVG":false,"version":"2.6-latest"},"livereload":{},"highlight":{},"search":{},"lunr":{"maxIndexSize":1000000,"ignoreSpecialCharacters":false},"sharing":{"facebook":true,"twitter":true,"google":false,"weibo":false,"instapaper":false,"vk":false,"all":["facebook","google","twitter","weibo","instapaper"]},"fontsettings":{"theme":"white","family":"sans","size":2},"theme-default":{"styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"},"showLevel":false}},"theme":"default","author":"Guang Yang","pdf":{"pageNumbers":true,"fontSize":12,"fontFamily":"Arial","paperSize":"a4","chapterMark":"pagebreak","pageBreaksBefore":"/","margin":{"right":62,"left":62,"top":56,"bottom":56}},"structure":{"langs":"LANGS.md","readme":"README.md","glossary":"GLOSSARY.md","summary":"SUMMARY.md"},"variables":{},"links":{"sidebar":{"Matrix Capsules with EM Routing":"https://gyang274.github.io/capsulesEM/"}},"gitbook":"*"},"file":{"path":"0x01.main.md","mtime":"2017-11-30T23:16:51.000Z","type":"markdown"},"gitbook":{"version":"3.2.3","time":"2017-12-03T16:50:59.929Z"},"basePath":".","book":{"language":""}});
+            gitbook.page.hasChanged({"page":{"title":"An Implementation","level":"2.2","depth":1,"next":{"title":"An Optimization","level":"2.3","depth":1,"path":"0x02.ende.md","ref":"0x02.ende.md","articles":[]},"previous":{"title":"An Understanding","level":"2.1","depth":1,"path":"0x00.init.md","ref":"0x00.init.md","articles":[]},"dir":"ltr"},"config":{"plugins":["mathjax"],"root":"./src","styles":{"website":"css/website.css"},"pluginsConfig":{"mathjax":{"forceSVG":false,"version":"2.6-latest"},"highlight":{},"search":{},"lunr":{"maxIndexSize":1000000,"ignoreSpecialCharacters":false},"sharing":{"facebook":true,"twitter":true,"google":false,"weibo":false,"instapaper":false,"vk":false,"all":["facebook","google","twitter","weibo","instapaper"]},"fontsettings":{"theme":"white","family":"sans","size":2},"theme-default":{"styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"},"showLevel":false}},"theme":"default","author":"Guang Yang","pdf":{"pageNumbers":true,"fontSize":12,"fontFamily":"Arial","paperSize":"a4","chapterMark":"pagebreak","pageBreaksBefore":"/","margin":{"right":62,"left":62,"top":56,"bottom":56}},"structure":{"langs":"LANGS.md","readme":"README.md","glossary":"GLOSSARY.md","summary":"SUMMARY.md"},"variables":{},"links":{"sidebar":{"Matrix Capsules with EM Routing":"https://gyang274.github.io/capsulesEM/"}},"gitbook":"*"},"file":{"path":"0x01.main.md","mtime":"2017-12-03T17:18:52.000Z","type":"markdown"},"gitbook":{"version":"3.2.3","time":"2017-12-03T17:19:05.523Z"},"basePath":".","book":{"language":""}});
         });
     </script>
 </div>
@@ -323,10 +354,6 @@
     
         
         <script src="gitbook/gitbook-plugin-mathjax/plugin.js"></script>
-        
-    
-        
-        <script src="gitbook/gitbook-plugin-livereload/plugin.js"></script>
         
     
         
